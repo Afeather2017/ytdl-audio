@@ -90,7 +90,25 @@ yt-dlp-audio download -o /tmp "URL"
 
 - Audio: `{title}.webm` or `{title}.m4a` depending on format
 - Subtitles: `{title}.{lang}.srt` in SRT format
+- Thumbnail: `{title}.jpg` (1280x720)
 - Re-running with the same output path resumes partial downloads
+
+### Convert and Cover Art
+
+Use `--format` to remux via ffmpeg and `--embed-cover` to embed the thumbnail:
+
+```bash
+# Remux WebM/Opus to OGG (stream copy, ~1s)
+yt-dlp-audio download --format ogg "URL"
+
+# Embed cover art in M4A
+yt-dlp-audio download -i 140 --embed-cover "URL"
+
+# Convert to MKV with cover art (instant, same container family as WebM)
+yt-dlp-audio download --format mkv --embed-cover "URL"
+```
+
+Requires `ffmpeg` on PATH. Downloads are audio-only WebM, so remux to OGG/MKV is fast (~1s). Cover art only works with M4A and MKV containers (not OGG).
 
 ## How It Works
 
