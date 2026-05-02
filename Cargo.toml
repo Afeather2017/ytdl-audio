@@ -1,14 +1,14 @@
 [package]
-name = "yt-dlp-audio"
+name = "ytdl-audio"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
-name = "yt_dlp_audio"
+name = "ytdl_audio"
 path = "src/lib.rs"
 
 [[bin]]
-name = "yt-dlp-audio"
+name = "ytdl-audio"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,9 +1,9 @@
 use clap::Parser;
 use std::path::PathBuf;
-use yt_dlp_audio::{convert_audio, DownloadOpts, YoutubeClient};
+use ytdl_audio::{convert_audio, DownloadOpts, YoutubeClient};
 
 #[derive(Parser)]
-#[command(name = "yt-dlp-audio", about = "Download YouTube audio + subtitles")]
+#[command(name = "ytdl-audio", about = "Download YouTube audio + subtitles")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
