@@ -2,6 +2,8 @@
 name = "ytdl-audio"
 version = "0.1.0"
 edition = "2024"
+description = "Download YouTube audio, subtitles, and thumbnails"
+license = "MIT"
 
 [lib]
 name = "ytdl_audio"
