@@ -1,6 +1,6 @@
 # yt-dlp-audio
 
-A minimal YouTube audio + subtitle downloader and search tool written in pure Rust. No Python, no JS runtime, no yt-dlp dependency.
+A minimal YouTube audio + subtitle downloader and search tool in Rust, with a small Node.js helper for YouTube's cipher and `n` challenge.
 
 ## Build
 
@@ -10,7 +10,8 @@ cargo build --release
 
 Binary size: ~7.3 MB.
 
-Dependencies: `reqwest`, `tokio`, `serde`, `serde_json`, `regex`, `clap`, `futures-util`, `urlencoding`.
+Dependencies: `reqwest`, `tokio`, `serde`, `serde_json`, `regex`, `clap`, `futures-util`, `urlencoding`, `sha1`, `reqwest_cookie_store`.
+Requires: `node` for the YouTube cipher solver.
 
 ## Usage
 
@@ -64,6 +65,9 @@ yt-dlp-audio download --no-proxy "URL"
 # Custom proxy
 yt-dlp-audio download --proxy socks5://127.0.0.1:9050 "URL"
 
+# Use browser cookies for bot-detected videos
+yt-dlp-audio download --cookies-from-browser chrome "URL"
+
 # Resume a partial download (just run the same command again)
 yt-dlp-audio download -o /tmp "URL"
 ```
@@ -75,6 +79,8 @@ yt-dlp-audio download -o /tmp "URL"
 | `-i, --itag` | 251 | Audio format itag |
 | `-o, --output-dir` | `.` | Output directory |
 | `--lang` | (first available) | Preferred subtitle language |
+| `--cookies` | (none) | Netscape cookie file |
+| `--cookies-from-browser` | (none) | Export cookies from a local browser profile |
 
 #### Audio Formats
 
@@ -112,81 +118,36 @@ Requires `ffmpeg` on PATH. Downloads are audio-only WebM, so remux to OGG/MKV is
 
 ## How It Works
 
-The tool exploits a key insight: YouTube's **ANDROID_VR** client (`REQUIRE_JS_PLAYER: false`) returns direct streaming URLs with no signature cipher. This eliminates the hardest part of YouTube downloading — running the obfuscated player JavaScript to decrypt stream URLs.
+The downloader now uses a hybrid flow:
 
-### Architecture
+1. It first tries the `ANDROID_VR` player, which is the simplest path when YouTube returns direct audio URLs.
+2. If YouTube bot-detects that client, it retries with cookies.
+3. With cookies, it can fall back to the `TV` / `web_safari` / `WEB` player clients.
+4. When YouTube returns `signatureCipher` or an `n` challenge, it invokes the local Node.js solver in `js/` using the vendored `yt-dlp` player logic.
+5. The resolved audio URL is downloaded with resume support, then subtitles and thumbnail are fetched.
+
+### Flow
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  1. URL Parsing                                           │
-│     youtube.com/watch?v=ID, youtu.be/ID, shorts/, live/   │
-│     Extract 11-char video ID via regex                     │
-├──────────────────────────────────────────────────────────┤
-│  2. Anti-Bot: Fetch visitorData                           │
-│     GET /watch?v=ID  (browser UA, cookies enabled)        │
-│     Parse "visitorData":"..." from HTML                    │
-│     Retries 5 times with exponential backoff              │
-├──────────────────────────────────────────────────────────┤
-│  3. Player API Call                                       │
-│     POST /youtubei/v1/player?key=API_KEY                  │
-│     Client: ANDROID_VR (Quest 3, v1.65.10)                │
-│     Includes visitorData to avoid bot detection            │
-│     Returns: formats, subtitles, video metadata           │
-├──────────────────────────────────────────────────────────┤
-│  4. Format Selection                                      │
-│     Filter adaptiveFormats by mime type "audio/*"         │
-│     Prefer requested itag (default: 251 = opus 128kbps)   │
-│     Fallback: highest bitrate audio format                │
-├──────────────────────────────────────────────────────────┤
-│  5. Range-Based Download (the critical part)              │
-│     Download in 10 MB chunks with HTTP Range headers      │
-│     Resume from existing partial file                     │
-│     On failure: truncate to chunk boundary, retry        │
-│     Up to 15 retries per chunk, exponential backoff       │
-│     This is how yt-dlp handles unreliable connections    │
-├──────────────────────────────────────────────────────────┤
-│  6. Subtitle Download                                    │
-│     Fetch from YouTube timedtext API                     │
-│     Parse XML <p t="ms" d="ms">text</p> format            │
-│     Convert to SRT with proper timestamps                │
-└──────────────────────────────────────────────────────────┘
-
-┌──────────────────────────────────────────────────────────┐
-│  Search (separate subcommand)                             │
-│     GET /results?search_query=<encoded>                   │
-│     Extract ytInitialData JSON from HTML                  │
-│     Parse videoRenderer entries: title, channel, ID,     │
-│       duration, views, publish time                      │
-└──────────────────────────────────────────────────────────┘
+watch page -> player API -> format selection -> Node JS solver if needed -> download
+                  |                |
+                  |                +-- decrypt signatureCipher / n
+                  +-- retry with cookies + SAPISIDHASH when bot-detected
 ```
 
-### Why ANDROID_VR Works
+### Cookie Support
 
-YouTube serves different stream data depending on the client. Most clients (web, iOS, tv) return `signatureCipher` — an encrypted URL parameter that requires running YouTube's minified player JavaScript to decrypt. The ANDROID_VR client is special:
+You can pass a Netscape cookie file with `--cookies`, or export cookies from Chrome with `--cookies-from-browser chrome`.
 
-- Configured with `REQUIRE_JS_PLAYER: false`
-- Returns direct `url` fields in the format list (no cipher)
-- Supports adaptive formats (separate audio/video streams)
-- Works without authentication
+### Node Solver
 
-The trade-off: YouTube may block this client in the future, and it cannot access age-restricted or login-required videos.
-
-### Why No JavaScript Runtime
-
-The original plan was to use Boa (a Rust JS engine) to interpret YouTube's cipher functions. This turned out to be unnecessary because:
-
-1. The ANDROID_VR client bypasses the cipher entirely
-2. The cipher functions change frequently and would need constant maintenance
-3. A JS engine adds ~3-5MB to binary size and complexity
-
-If YouTube ever removes the ANDROID_VR direct URL behavior, the cipher code would need to be ported.
+`js/solver.mjs` wraps the vendored `yt-dlp` cipher solver and runs it under Node.js. This is what makes the Rust refactor work on YouTube responses that need cipher decryption.
 
 ## Limitations
 
-- **Login-required videos** (age-gated, members-only, private) cannot be downloaded
+- **Login-required videos** may still need fresh cookies from Chrome
 - **No video download** — audio only
-- **ANDROID_VR client version** may be blocked by YouTube in the future; when that happens, the client version in `src/main.rs` (currently `1.65.10`) needs to be updated to match yt-dlp's current version
-- **No PO token support** — YouTube's newer anti-bot system; most videos work without it
+- **Node.js is required** for the cipher solver
 - **Subtitle language filtering** uses prefix matching (`--lang ja` matches `ja`, but falls back to the first available track if no match)
 
 ## Comparison with yt-dlp
