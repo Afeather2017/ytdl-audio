@@ -23,3 +23,6 @@ clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
 urlencoding = "2"
 thiserror = "2"
+sha1 = "0.10"
+reqwest_cookie_store = "0.8"
+url = "2"

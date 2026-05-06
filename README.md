@@ -68,6 +68,9 @@ yt-dlp-audio download --proxy socks5://127.0.0.1:9050 "URL"
 # Use browser cookies for bot-detected videos
 yt-dlp-audio download --cookies-from-browser chrome "URL"
 
+# Same flow through a proxy
+yt-dlp-audio download --proxy http://127.0.0.1:1080 --cookies-from-browser chrome -o /tmp "URL"
+
 # Resume a partial download (just run the same command again)
 yt-dlp-audio download -o /tmp "URL"
 ```
@@ -137,7 +140,7 @@ watch page -> player API -> format selection -> Node JS solver if needed -> down
 
 ### Cookie Support
 
-You can pass a Netscape cookie file with `--cookies`, or export cookies from Chrome with `--cookies-from-browser chrome`.
+You can pass a Netscape cookie file with `--cookies`, or export cookies from Chrome with `--cookies-from-browser chrome`. On bot-detected videos, the working path is to let the reqwest cookie jar carry the live browser cookies into the fallback `tv_downgraded` / `WEB` requests; manually forcing a stale `Cookie:` header breaks that flow.
 
 ### Node Solver
 

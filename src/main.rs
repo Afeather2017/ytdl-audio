@@ -30,6 +30,14 @@ enum Command {
         #[arg(long)]
         lang: Option<String>,
 
+        /// Netscape cookie file for bot-detected videos
+        #[arg(long)]
+        cookies: Option<String>,
+
+        /// Extract cookies directly from a browser profile via local yt-dlp code (e.g. chrome)
+        #[arg(long)]
+        cookies_from_browser: Option<String>,
+
         /// Convert to format via ffmpeg (e.g. ogg, m4a, mp3)
         #[arg(short, long)]
         format: Option<String>,
@@ -59,12 +67,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             itag,
             output_dir,
             lang,
+            cookies,
+            cookies_from_browser,
             format,
             embed_cover,
         } => {
             eprintln!("Downloading {}...", url);
             let result = client
-                .download(&url, DownloadOpts { itag, output_dir: output_dir.clone(), lang })
+                .download(
+                    &url,
+                    DownloadOpts {
+                        itag,
+                        output_dir: output_dir.clone(),
+                        lang,
+                        cookies,
+                        cookies_from_browser,
+                    },
+                )
                 .await?;
 
             let final_audio = if format.is_some() || embed_cover {

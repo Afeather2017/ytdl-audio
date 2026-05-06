@@ -1,0 +1,9 @@
+{
+  "name": "yt-dlp-rs-solver",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "meriyah": "^6.1.4",
+    "astring": "^1.9.0"
+  }
+}
