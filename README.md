@@ -160,6 +160,8 @@ cargo run -- download --proxy http://127.0.0.1:1080 --cookies /tmp/ytdl-audio-co
 
 That exported Netscape cookie file successfully downloads the stream in this repo.
 
+Important: browser cookies are scoped by domain and path. `youtube.com` and `google.com` cookies are not interchangeable, so flattening them into one raw text file loses the routing metadata that lets reqwest pick the right cookies for each request.
+
 ### Node Solver
 
 `js/solver.mjs` wraps the vendored `yt-dlp` cipher solver and runs it under Node.js. This is what makes the Rust refactor work on YouTube responses that need cipher decryption.
