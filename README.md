@@ -142,6 +142,24 @@ watch page -> player API -> format selection -> Node JS solver if needed -> down
 
 You can pass a Netscape cookie file with `--cookies`, or export cookies from Chrome with `--cookies-from-browser chrome`. On bot-detected videos, the working path is to let the reqwest cookie jar carry the live browser cookies into the fallback `tv_downgraded` / `WEB` requests; manually forcing a stale `Cookie:` header breaks that flow.
 
+Verified flow:
+
+```bash
+python - <<'PY'
+import time
+from yt_dlp.cookies import extract_cookies_from_browser
+out = f'/tmp/ytdl-audio-cookies-{time.time_ns()}.txt'
+jar = extract_cookies_from_browser('chrome')
+jar._cookies = {domain: paths for domain, paths in jar._cookies.items() if 'youtube.com' in domain or 'google.com' in domain}
+jar.save(out)
+print(out)
+PY
+
+cargo run -- download --proxy http://127.0.0.1:1080 --cookies /tmp/ytdl-audio-cookies-*.txt -o /tmp 'https://www.youtube.com/watch?v=fywVL3hh1xo'
+```
+
+That exported Netscape cookie file successfully downloads the stream in this repo.
+
 ### Node Solver
 
 `js/solver.mjs` wraps the vendored `yt-dlp` cipher solver and runs it under Node.js. This is what makes the Rust refactor work on YouTube responses that need cipher decryption.
