@@ -145,22 +145,25 @@ You can pass a Netscape cookie file with `--cookies`, or export cookies from Chr
 Verified flow:
 
 ```bash
-python - <<'PY'
-import time
-from yt_dlp.cookies import extract_cookies_from_browser
-out = f'/tmp/ytdl-audio-cookies-{time.time_ns()}.txt'
-jar = extract_cookies_from_browser('chrome')
-jar._cookies = {domain: paths for domain, paths in jar._cookies.items() if 'youtube.com' in domain or 'google.com' in domain}
-jar.save(out)
-print(out)
-PY
+node js/export_cookies_cdp.mjs \
+  --launch \
+  --url 'https://www.youtube.com/watch?v=fywVL3hh1xo' \
+  --out /tmp/ytdl-audio-cookies.txt
 
-cargo run -- download --proxy http://127.0.0.1:1080 --cookies /tmp/ytdl-audio-cookies-*.txt -o /tmp 'https://www.youtube.com/watch?v=fywVL3hh1xo'
+cargo run -- download --proxy http://127.0.0.1:1080 --cookies /tmp/ytdl-audio-cookies.txt -o /tmp 'https://www.youtube.com/watch?v=fywVL3hh1xo'
 ```
 
-That exported Netscape cookie file successfully downloads the stream in this repo.
+The helper pauses so you can finish the YouTube login in Chrome, then it exports full `youtube.com` and `google.com` cookies through Chrome DevTools Protocol and writes a Netscape jar. That jar can be consumed directly by this repo.
 
 Important: browser cookies are scoped by domain and path. `youtube.com` and `google.com` cookies are not interchangeable, so flattening them into one raw text file loses the routing metadata that lets reqwest pick the right cookies for each request.
+
+If you already have Chrome running with `--remote-debugging-port=9222`, you can skip `--launch`:
+
+```bash
+node js/export_cookies_cdp.mjs --out /tmp/ytdl-audio-cookies.txt
+```
+
+`document.cookie` is not enough for this problem because it cannot read `HttpOnly` cookies. The CDP helper uses `Storage.getCookies` / `Network.getAllCookies`, which returns the full structured cookie records needed to rebuild the jar.
 
 ### Node Solver
 

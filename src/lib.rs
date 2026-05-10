@@ -110,25 +110,6 @@ impl YoutubeClient {
         })
     }
 
-    pub fn with_cookies(proxy: Option<&str>, cookie_path: &str) -> Result<Self, Error> {
-        let _ = load_netscape_cookies(cookie_path)?;
-        Self::new(proxy)
-    }
-
-    fn build_cookie_client(&self, cookie_path: &str) -> Result<(reqwest::Client, AuthContext), Error> {
-        let auth = load_netscape_cookies(cookie_path)?;
-        let cookie_store = load_cookie_store_from_netscape(cookie_path)?;
-        let mut builder = reqwest::Client::builder()
-            .user_agent(BROWSER_USER_AGENT)
-            .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .cookie_provider(Arc::new(CookieStoreMutex::new(cookie_store)))
-            .http1_only();
-        if let Some(ref p) = self.proxy {
-            builder = builder.proxy(reqwest::Proxy::all(p)?);
-        }
-        Ok((builder.build()?, auth))
-    }
 
     pub fn search(
         &self,
@@ -381,6 +362,17 @@ fn load_cookie_store_from_netscape(path: &str) -> Result<CookieStore, Error> {
     load_cookie_store_from_header(&contents)
 }
 
+fn debug_cookie_header(store: &CookieStore, url: &str, label: &str) {
+    if let Ok(url) = reqwest::Url::parse(url) {
+        let cookie_header = store
+            .get_request_values(&url)
+            .map(|(name, value)| format!("{}={}", name, value))
+            .collect::<Vec<_>>()
+            .join("; ");
+        eprintln!("cookie_header[{label}]: {}", cookie_header);
+    }
+}
+
 fn load_cookie_store_from_header(contents: &str) -> Result<CookieStore, Error> {
     let mut store = CookieStore::default();
     let mut added = 0usize;
@@ -442,44 +434,145 @@ fn header_cookie_domain(name: &str) -> (&'static str, reqwest::Url) {
     )
 }
 
-fn export_browser_cookies(browser: &str) -> Result<PathBuf, Error> {
-    eprintln!("Extracting cookies from browser: {}", browser);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let output_path = format!("/tmp/ytdl-audio-cookies-{}.txt", nanos);
-    let output = std::process::Command::new("python")
-        .arg("-c")
-        .arg(
-            r#"
-import sys
-from yt_dlp.cookies import extract_cookies_from_browser
-
-browser = sys.argv[1]
-output = sys.argv[2]
-jar = extract_cookies_from_browser(browser)
-jar._cookies = {
-    domain: paths for domain, paths in jar._cookies.items()
-    if 'youtube.com' in domain or 'google.com' in domain
-}
-jar.save(output)
-"#,
-        )
-        .arg(browser)
-        .arg(&output_path)
+fn export_browser_cookies(port: u16) -> Result<Vec<CdpCookie>, Error> {
+    eprintln!("Extracting cookies from Chrome via CDP on port {}...", port);
+    let script = crate_dir().join("js").join("export_cookies_cdp.mjs");
+    let output = std::process::Command::new("node")
+        .arg(&script)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--json-stdout")
+        .arg("--no-wait")
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(Error::Other(format!(
-            "failed to export browser cookies with yt-dlp: {}",
+            "failed to export cookies via CDP: {}",
             stderr.trim()
         )));
     }
 
-    eprintln!("Exported browser cookies to {}", output_path);
-    Ok(PathBuf::from(output_path))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let cookies: Vec<CdpCookie> =
+        serde_json::from_str(&stdout).map_err(|e| Error::Other(format!("invalid CDP cookie JSON: {}", e)))?;
+    eprintln!("Extracted {} cookies via CDP", cookies.len());
+    Ok(cookies)
+}
+
+#[derive(Deserialize)]
+struct CdpCookie {
+    name: String,
+    value: String,
+    domain: String,
+    path: String,
+    secure: bool,
+    #[serde(rename = "httpOnly")]
+    #[allow(dead_code)]
+    http_only: bool,
+    #[allow(dead_code)]
+    expires: f64,
+    #[serde(rename = "sameSite")]
+    #[allow(dead_code)]
+    same_site: Option<String>,
+}
+
+fn build_cookie_store_and_auth(cookies: &[CdpCookie]) -> Result<(CookieStore, AuthContext), Error> {
+    let mut store = CookieStore::default();
+    let mut sapisid = String::new();
+    let mut sapisid_1p = None;
+    let mut sapisid_3p = None;
+    let mut session_index = None;
+    let mut delegated_session_id = None;
+    let mut user_session_id = None;
+    let mut visitor_data = None;
+    let mut logged_in = false;
+
+    for c in cookies {
+        if c.name.is_empty() || c.domain.is_empty() {
+            continue;
+        }
+
+        let scheme = if c.secure { "https" } else { "http" };
+        let host = c.domain.trim_start_matches('.');
+        let url = reqwest::Url::parse(&format!("{}://{}{}", scheme, host, c.path))
+            .map_err(|e| Error::Other(format!("invalid cookie URL: {}", e)))?;
+
+        let cookie = if c.secure {
+            format!("{}={}; Domain={}; Path={}; Secure", c.name, c.value, c.domain, c.path)
+        } else {
+            format!("{}={}; Domain={}; Path={}", c.name, c.value, c.domain, c.path)
+        };
+        store
+            .parse(&cookie, &url)
+            .map_err(|e| Error::Other(format!("failed to parse cookie {}: {:?}", c.name, e)))?;
+
+        if c.name == "SAPISID" || c.name == "__Secure-3PAPISID" {
+            sapisid = c.value.clone();
+        }
+        if c.name == "__Secure-1PAPISID" && sapisid_1p.is_none() {
+            sapisid_1p = Some(c.value.clone());
+        }
+        if c.name == "__Secure-3PAPISID" && sapisid_3p.is_none() {
+            sapisid_3p = Some(c.value.clone());
+        }
+        if c.name == "LOGIN_INFO" {
+            logged_in = true;
+        }
+        if c.name == "VISITOR_INFO1_LIVE" && visitor_data.is_none() {
+            visitor_data = Some(c.value.clone());
+        }
+        if c.name == "SESSION_INDEX" && session_index.is_none() {
+            session_index = c.value.parse::<u32>().ok();
+        }
+        if c.name == "DELEGATED_SESSION_ID" && delegated_session_id.is_none() {
+            delegated_session_id = Some(c.value.clone());
+        }
+        if c.name == "USER_SESSION_ID" && user_session_id.is_none() {
+            user_session_id = Some(c.value.clone());
+        }
+    }
+
+    let auth = AuthContext {
+        sapisid,
+        sapisid_1p,
+        sapisid_3p,
+        visitor_data,
+        ytcfg_visitor_data: None,
+        ytcfg_client_version: None,
+        data_sync_id: None,
+        sts: None,
+        session_index,
+        delegated_session_id,
+        user_session_id,
+        logged_in,
+    };
+    Ok((store, auth))
+}
+
+fn crate_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("YTDL_AUDIO_CRATE_DIR") {
+        let path = PathBuf::from(dir);
+        if path.join("js/export_cookies_cdp.mjs").exists() {
+            return path;
+        }
+    }
+
+    if let Ok(dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let path = PathBuf::from(dir);
+        if path.join("js/export_cookies_cdp.mjs").exists() {
+            return path;
+        }
+    }
+
+    let mut dir = std::env::current_exe().expect("current exe").canonicalize().ok();
+    while let Some(d) = dir.as_ref() {
+        if d.join("js/export_cookies_cdp.mjs").exists() {
+            return d.to_path_buf();
+        }
+        dir = d.parent().map(|p| p.to_path_buf());
+    }
+    PathBuf::from(".")
 }
 
 fn parse_cookie_source(contents: &str) -> Result<AuthContext, Error> {
@@ -1684,15 +1777,14 @@ async fn run_download(
     url: &str,
     opts: DownloadOpts,
 ) -> Result<DownloadResult, Error> {
-    let browser_cookie_path = if let Some(browser) = opts.cookies_from_browser.as_deref() {
-        Some(export_browser_cookies(browser)?)
+    let cdp_cookies = if let Some(port_str) = opts.cookies_from_browser.as_deref() {
+        let port: u16 = port_str.parse().map_err(|_| {
+            Error::Other(format!("--cookies-from-browser expects a CDP port number, got: {}", port_str))
+        })?;
+        Some(export_browser_cookies(port)?)
     } else {
         None
     };
-    let cookie_path = browser_cookie_path
-        .as_deref()
-        .and_then(|p| p.to_str())
-        .or(opts.cookies.as_deref());
 
     let video_id = extract_video_id(url).ok_or("Could not extract video ID from URL")?;
 
@@ -1702,13 +1794,48 @@ async fn run_download(
     let (pr, client, page_html) = if pr.playability_status.status != "OK" {
         let reason = pr.playability_status.reason.as_deref().unwrap_or("unknown");
         eprintln!("ANDROID_VR failed: {} — trying tv_downgraded client with cookies...", reason);
-        let cookie_path = cookie_path.ok_or_else(|| {
-            Error::Other(format!(
+
+        let (cookie_store, mut auth) = if let Some(ref cookies) = cdp_cookies {
+            build_cookie_store_and_auth(cookies)?
+        } else if let Some(ref path) = opts.cookies {
+            let auth = load_netscape_cookies(path)?;
+            let store = load_cookie_store_from_netscape(path)?;
+            (store, auth)
+        } else {
+            return Err(Error::Other(format!(
                 "Video not playable ({}). Provide cookies with --cookies or --cookies-from-browser to use fallback clients.",
                 reason
-            ))
-        })?;
-        let (cookie_client, mut auth) = yc.build_cookie_client(cookie_path)?;
+            )));
+        };
+
+        debug_cookie_header(
+            &cookie_store,
+            &format!("https://www.youtube.com/watch?v={}&bpctr=9999999999&has_verified=1", video_id),
+            "watch_page",
+        );
+        debug_cookie_header(
+            &cookie_store,
+            "https://www.youtube.com/tv",
+            "youtube_tv",
+        );
+        debug_cookie_header(
+            &cookie_store,
+            "https://www.youtube.com/youtubei/v1/player?key=stub",
+            "player_api",
+        );
+
+        let cookie_client = {
+            let mut builder = reqwest::Client::builder()
+                .user_agent(BROWSER_USER_AGENT)
+                .timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .cookie_provider(Arc::new(CookieStoreMutex::new(cookie_store)))
+                .http1_only();
+            if let Some(ref p) = yc.proxy {
+                builder = builder.proxy(reqwest::Proxy::all(p)?);
+            }
+            builder.build()?
+        };
         let (_, web_page_html) = fetch_video_page(&cookie_client, &video_id).await?;
         let page_ctx = parse_ytcfg_context(&web_page_html);
         eprintln!(
@@ -1935,4 +2062,50 @@ async fn fetch_subtitles(
     }
 
     Ok(paths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cdp_cookie_json_parsing() {
+        let json = r#"[
+            {"name":"APISID","value":"Y_JLFkQM-t4O0Xld/A2q7bLdXLrjIgAlBa","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"},
+            {"name":"SAPISID","value":"1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"},
+            {"name":"__Secure-1PAPISID","value":"1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"},
+            {"name":"__Secure-3PAPISID","value":"1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"},
+            {"name":"PREF","value":"tz=Asia.Shanghai","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"},
+            {"name":"LOGIN_INFO","value":"AFmmF2swRA","domain":".google.com","path":"/","secure":true,"httpOnly":true,"expires":-1,"sameSite":"NoRestriction"},
+            {"name":"SID","value":"g.a000k_test","domain":".youtube.com","path":"/","secure":true,"httpOnly":false,"expires":-1,"sameSite":"Lax"}
+        ]"#;
+
+        let cookies: Vec<CdpCookie> = serde_json::from_str(json).unwrap();
+        assert_eq!(cookies.len(), 7);
+
+        let (store, auth) = build_cookie_store_and_auth(&cookies).unwrap();
+
+        assert_eq!(auth.sapisid, "1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy");
+        assert_eq!(auth.sapisid_1p.as_deref(), Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy"));
+        assert_eq!(auth.sapisid_3p.as_deref(), Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy"));
+        assert!(auth.logged_in);
+
+        let yt_url = reqwest::Url::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap();
+        let cookie_header: String = store
+            .get_request_values(&yt_url)
+            .map(|(n, v)| format!("{}={}", n, v))
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(cookie_header.contains("SAPISID="));
+        assert!(cookie_header.contains("APISID="));
+        assert!(cookie_header.contains("__Secure-3PAPISID="));
+
+        let google_url = reqwest::Url::parse("https://accounts.google.com/").unwrap();
+        let google_cookies: String = store
+            .get_request_values(&google_url)
+            .map(|(n, v)| format!("{}={}", n, v))
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(google_cookies.contains("LOGIN_INFO="));
+    }
 }

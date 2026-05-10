@@ -34,7 +34,7 @@ enum Command {
         #[arg(long)]
         cookies: Option<String>,
 
-        /// Extract cookies directly from a browser profile via local yt-dlp code (e.g. chrome)
+        /// CDP port of a running Chrome instance (e.g. 9222). Requires Chrome started with --remote-debugging-port=PORT.
         #[arg(long)]
         cookies_from_browser: Option<String>,
 
