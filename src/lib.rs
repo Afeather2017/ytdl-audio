@@ -86,10 +86,58 @@ pub struct DownloadResult {
     pub thumbnail_path: Option<PathBuf>,
 }
 
+pub trait JsRunner: Send + Sync {
+    fn run(&self, input: &str) -> Result<String, Error>;
+}
+
+pub struct NodeJsRunner {
+    solver_path: PathBuf,
+}
+
+impl Default for NodeJsRunner {
+    fn default() -> Self {
+        Self {
+            solver_path: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("js/solver.mjs"),
+        }
+    }
+}
+
+impl JsRunner for NodeJsRunner {
+    fn run(&self, input: &str) -> Result<String, Error> {
+        eprintln!("solver flow: solver_path={}", self.solver_path.display());
+        let mut cmd = std::process::Command::new("node");
+        cmd.arg(&self.solver_path);
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        eprintln!("solver flow: spawning node");
+        let mut child = cmd.spawn().map_err(|e| Error::NodeJs(format!("spawn failed: {}", e)))?;
+        eprintln!("solver flow: node spawned");
+        {
+            let stdin = child.stdin.as_mut().ok_or_else(|| Error::NodeJs("failed to open node stdin".into()))?;
+            eprintln!("solver flow: writing stdin bytes={}", input.len());
+            stdin.write_all(input.as_bytes())?;
+        }
+        eprintln!("solver flow: waiting for node output");
+        let output = child.wait_with_output()?;
+        eprintln!(
+            "solver flow: node exited status={} stdout_bytes={} stderr_bytes={}",
+            output.status,
+            output.stdout.len(),
+            output.stderr.len()
+        );
+        if !output.status.success() {
+            return Err(Error::NodeJs(String::from_utf8_lossy(&output.stderr).trim().to_string()));
+        }
+        String::from_utf8(output.stdout).map_err(|e| Error::Other(format!("solver output was not utf-8: {}", e)))
+    }
+}
+
 pub struct YoutubeClient {
     client: reqwest::Client,
     #[allow(dead_code)]
     proxy: Option<String>,
+    js_runner: Arc<dyn JsRunner>,
 }
 
 impl YoutubeClient {
@@ -107,7 +155,15 @@ impl YoutubeClient {
         Ok(Self {
             client: builder.build()?,
             proxy,
+            js_runner: Arc::new(NodeJsRunner::default()),
         })
+    }
+
+    pub fn set_js_runner<R>(&mut self, runner: R)
+    where
+        R: JsRunner + 'static,
+    {
+        self.js_runner = Arc::new(runner);
     }
 
 
@@ -991,7 +1047,7 @@ async fn fetch_client_config_page(
         .await?)
 }
 
-fn run_sig_solver(player_js: &str, sig: Option<&str>, n: Option<&str>) -> Result<(Option<String>, Option<String>), Error> {
+fn build_sig_solver_input(player_js: &str, sig: Option<&str>, n: Option<&str>) -> Option<String> {
     let mut requests = Vec::new();
     if let Some(sig) = sig {
         requests.push(serde_json::json!({
@@ -1006,31 +1062,25 @@ fn run_sig_solver(player_js: &str, sig: Option<&str>, n: Option<&str>) -> Result
         }));
     }
     if requests.is_empty() {
-        return Ok((None, None));
+        return None;
     }
+    Some(
+        serde_json::json!({
+            "type": "player",
+            "player": player_js,
+            "requests": requests,
+            "output_preprocessed": false,
+        })
+        .to_string(),
+    )
+}
 
-    let solver_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("js/solver.mjs");
-    let input = serde_json::json!({
-        "type": "player",
-        "player": player_js,
-        "requests": requests,
-        "output_preprocessed": false,
-    });
-    let mut cmd = std::process::Command::new("node");
-    cmd.arg(solver_path);
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn()?;
-    {
-        let stdin = child.stdin.as_mut().ok_or_else(|| Error::NodeJs("failed to open node stdin".into()))?;
-        stdin.write_all(input.to_string().as_bytes())?;
-    }
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        return Err(Error::NodeJs(String::from_utf8_lossy(&output.stderr).trim().to_string()));
-    }
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+fn parse_sig_solver_output(
+    output: &str,
+    sig: Option<&str>,
+    n: Option<&str>,
+) -> Result<(Option<String>, Option<String>), Error> {
+    let value: serde_json::Value = serde_json::from_str(output)?;
     if value.get("type").and_then(|v| v.as_str()) == Some("error") {
         return Err(Error::SigCipher(
             value.get("error").and_then(|v| v.as_str()).unwrap_or("unknown solver error").to_string(),
@@ -1067,15 +1117,43 @@ fn run_sig_solver(player_js: &str, sig: Option<&str>, n: Option<&str>) -> Result
     Ok((solved_sig, solved_n))
 }
 
+fn run_sig_solver_with_runner(
+    runner: &dyn JsRunner,
+    player_js: &str,
+    sig: Option<&str>,
+    n: Option<&str>,
+) -> Result<(Option<String>, Option<String>), Error> {
+    eprintln!(
+        "solver flow: enter run_sig_solver sig_present={} n_present={}",
+        sig.is_some(),
+        n.is_some()
+    );
+    let Some(input) = build_sig_solver_input(player_js, sig, n) else {
+        return Ok((None, None));
+    };
+    let output = runner.run(&input)?;
+    parse_sig_solver_output(&output, sig, n)
+}
+
 fn resolve_format_url(
     fmt: &AdaptiveFormat,
     player_js: Option<&str>,
+    js_runner: &dyn JsRunner,
 ) -> Result<Option<String>, Error> {
+    eprintln!(
+        "resolve flow: enter itag={} has_url={} has_cipher={} player_js={}",
+        fmt.itag,
+        fmt.url.is_some(),
+        fmt.signature_cipher.is_some(),
+        player_js.is_some()
+    );
     if let Some(url) = &fmt.url {
+        eprintln!("resolve flow: direct url path");
         if let Some((base, query)) = url.split_once('?') {
             let mut params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
             if let (Some(n), Some(js)) = (params.get("n"), player_js) {
-                let (_, solved_n) = run_sig_solver(js, None, Some(n.as_str()))?;
+                eprintln!("resolve flow: direct url has n param, solving");
+                let (_, solved_n) = run_sig_solver_with_runner(js_runner, js, None, Some(n.as_str()))?;
                 if let Some(solved_n) = solved_n {
                     params.insert("n".into(), solved_n);
                     let rebuilt = format!(
@@ -1089,16 +1167,20 @@ fn resolve_format_url(
                 }
             }
         }
+        eprintln!("resolve flow: returning direct url");
         return Ok(Some(url.clone()));
     }
 
     let Some(cipher) = fmt.signature_cipher.as_deref() else {
+        eprintln!("resolve flow: no url and no cipher");
         return Ok(None);
     };
     let Some(js) = player_js else {
+        eprintln!("resolve flow: cipher needs player js but none available");
         return Err(Error::SigCipher("ciphered format requires player JS".into()));
     };
 
+    eprintln!("resolve flow: cipher path");
     let mut params = parse_signature_cipher(cipher);
     let mut url = params
         .remove("url")
@@ -1112,7 +1194,12 @@ fn resolve_format_url(
     } else {
         None
     };
-    let (solved_sig, solved_n) = run_sig_solver(js, sig, n.as_deref())?;
+    eprintln!(
+        "resolve flow: calling solver sig_present={} n_present={}",
+        sig.is_some(),
+        n.is_some()
+    );
+    let (solved_sig, solved_n) = run_sig_solver_with_runner(js_runner, js, sig, n.as_deref())?;
     if let Some(sig) = solved_sig {
         let sep = if url.contains('?') { "&" } else { "?" };
         url.push_str(sep);
@@ -1131,17 +1218,22 @@ fn resolve_format_url(
             );
         }
     }
+    eprintln!("resolve flow: returning solved url");
     Ok(Some(url))
 }
 
-fn solve_n_in_url(url: &str, player_js: Option<&str>) -> Result<String, Error> {
+fn solve_n_in_url_with_runner(
+    url: &str,
+    player_js: Option<&str>,
+    js_runner: &dyn JsRunner,
+) -> Result<String, Error> {
     let Some((base, query)) = url.split_once('?') else {
         return Ok(url.to_string());
     };
     let mut params: HashMap<String, String> =
         url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
     if let (Some(n), Some(js)) = (params.get("n"), player_js) {
-        let (_, solved_n) = run_sig_solver(js, None, Some(n.as_str()))?;
+        let (_, solved_n) = run_sig_solver_with_runner(js_runner, js, None, Some(n.as_str()))?;
         if let Some(solved_n) = solved_n {
             params.insert("n".into(), solved_n);
             return Ok(format!(
@@ -1160,8 +1252,9 @@ async fn fetch_hls_audio_stream(
     client: &reqwest::Client,
     manifest_url: &str,
     player_js: Option<&str>,
+    js_runner: &dyn JsRunner,
 ) -> Result<Option<String>, Error> {
-    let manifest_url = solve_n_in_url(manifest_url, player_js)?;
+    let manifest_url = solve_n_in_url_with_runner(manifest_url, player_js, js_runner)?;
     eprintln!("Fetching HLS manifest...");
     let text = client.get(&manifest_url).send().await?.text().await?;
 
@@ -1211,13 +1304,29 @@ async fn download_stream_file(
     playlist_url: &str,
     output_path: &Path,
     player_js: Option<&str>,
+    js_runner: &dyn JsRunner,
 ) -> Result<(), Error> {
-    let playlist_url = solve_n_in_url(playlist_url, player_js)?;
+    eprintln!("download flow: enter download_stream_file path={}", output_path.display());
+    let playlist_url = solve_n_in_url_with_runner(playlist_url, player_js, js_runner)?;
     eprintln!("Fetching media playlist...");
     let text = client.get(&playlist_url).send().await?.text().await?;
     let base_url =
         reqwest::Url::parse(&playlist_url).map_err(|e| Error::Other(format!("invalid playlist URL: {}", e)))?;
-    let mut file = std::fs::File::create(output_path)?;
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            Error::Other(format!(
+                "failed to create parent dir {}: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+    eprintln!("download flow: stream parent ready path={}", output_path.display());
+    eprintln!("download target: audio={}", output_path.display());
+    eprintln!("opening stream file: {}", output_path.display());
+    let mut file = std::fs::File::create(output_path).map_err(|e| {
+        Error::Other(format!("failed to create {}: {}", output_path.display(), e))
+    })?;
 
     for line in text.lines() {
         let line = line.trim();
@@ -1232,7 +1341,7 @@ async fn download_stream_file(
                 .map(|u| u.to_string())
                 .map_err(|e| Error::Other(format!("invalid segment URL {}: {}", line, e)))?
         };
-        let segment_url = solve_n_in_url(&segment_url, player_js)?;
+        let segment_url = solve_n_in_url_with_runner(&segment_url, player_js, js_runner)?;
         let bytes = client.get(&segment_url).send().await?.bytes().await?;
         file.write_all(&bytes)?;
     }
@@ -1527,19 +1636,50 @@ async fn download_file(
     path: &Path,
     total_size: u64,
 ) -> Result<(), Error> {
-    let existing = if path.exists() {
-        let meta = std::fs::metadata(path)?;
-        if meta.len() <= total_size {
-            meta.len()
-        } else {
-            0
+    eprintln!("download flow: enter download_file path={}", path.display());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            Error::Other(format!(
+                "failed to create parent dir {}: {}",
+                parent.display(),
+                e
+            ))
+        })?;
+    }
+    eprintln!("download flow: parent ready path={}", path.display());
+    eprintln!("download target: audio={}", path.display());
+    let existing = match std::fs::metadata(path) {
+        Ok(meta) => {
+            if meta.len() <= total_size {
+                meta.len()
+            } else {
+                0
+            }
         }
-    } else {
-        0
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => {
+            eprintln!("download flow: stat failed path={} err={}", path.display(), e);
+            return Err(Error::Other(format!(
+                "failed to stat {}: {}",
+                path.display(),
+                e
+            )));
+        }
     };
 
     let mut downloaded = existing;
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+    eprintln!("download flow: before open path={}", path.display());
+    eprintln!(
+        "opening download file: {} (existing={} total={})",
+        path.display(),
+        existing,
+        total_size
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| Error::Other(format!("failed to open {} for append: {}", path.display(), e)))?;
 
     while downloaded < total_size {
         let range_start = downloaded;
@@ -1976,16 +2116,18 @@ async fn run_download(
 
     let audio_path = if let Some(manifest_url) = sd.hls_manifest_url.as_deref() {
         if let Some(media_playlist_url) =
-            fetch_hls_audio_stream(&client, manifest_url, player_js.as_deref()).await?
+            fetch_hls_audio_stream(&client, manifest_url, player_js.as_deref(), yc.js_runner.as_ref()).await?
         {
             let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.m4a", safe_title));
-            download_stream_file(&client, &media_playlist_url, &audio_path, player_js.as_deref()).await?;
+            eprintln!("download target 1: audio={}", audio_path.display());
+            download_stream_file(&client, &media_playlist_url, &audio_path, player_js.as_deref(), yc.js_runner.as_ref()).await?;
             audio_path
         } else {
             let fmt = fmt.ok_or("No suitable audio format found")?;
             let ext = extension_for_mime(&fmt.mime_type);
             let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.{}", safe_title, ext));
-            let audio_url = resolve_format_url(fmt, player_js.as_deref())?.ok_or("Format has no direct URL")?;
+            eprintln!("download target 2: audio={}", audio_path.display());
+            let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
             let content_length = fmt.content_length.ok_or("Unknown content length")?;
             download_file(&client, &audio_url, &audio_path, content_length).await?;
             audio_path
@@ -1994,7 +2136,9 @@ async fn run_download(
         let fmt = fmt.ok_or("No suitable audio format found")?;
         let ext = extension_for_mime(&fmt.mime_type);
         let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.{}", safe_title, ext));
-        let audio_url = resolve_format_url(fmt, player_js.as_deref())?.ok_or("Format has no direct URL")?;
+        eprintln!("download target 3: audio={}", audio_path.display());
+        let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
+        eprintln!("download target 3 done");
         let content_length = fmt.content_length.ok_or("Unknown content length")?;
         download_file(&client, &audio_url, &audio_path, content_length).await?;
         audio_path
@@ -2003,7 +2147,7 @@ async fn run_download(
     // Thumbnail
     let thumb_path =
         PathBuf::from(&opts.output_dir).join(format!("{}.jpg", safe_title));
-    let yc = YoutubeClient { client: client.clone(), proxy: None };
+    eprintln!("download target: thumbnail={}", thumb_path.display());
     let thumbnail_path = match yc.download_thumbnail(&video_id, &thumb_path).await {
         Ok(()) => Some(thumb_path),
         Err(_) => None,
@@ -2051,10 +2195,14 @@ async fn fetch_subtitles(
     for track in tracks {
         let srt_path =
             PathBuf::from(output_dir).join(format!("{}.{}.srt", safe_title, track.language_code));
+        eprintln!("download flow: subtitle path={}", srt_path.display());
+        eprintln!("download target: subtitle={}", srt_path.display());
         let sub_url = format!("{}&fmt=json3", track.base_url);
         match fetch_subtitle(client, &sub_url).await {
             Ok(srt_content) if !srt_content.is_empty() => {
-                std::fs::write(&srt_path, &srt_content)?;
+                std::fs::write(&srt_path, &srt_content).map_err(|e| {
+                    Error::Other(format!("failed to write {}: {}", srt_path.display(), e))
+                })?;
                 paths.push(srt_path);
             }
             _ => {}
