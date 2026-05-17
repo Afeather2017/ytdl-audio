@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
-use ytdl_audio::{convert_audio, DownloadOpts, YoutubeClient};
+use ytdl_audio::{convert_audio, DownloadOpts, StdFileWriter, YoutubeClient};
 
 #[derive(Parser)]
 #[command(name = "ytdl-audio", about = "Download YouTube audio + subtitles")]
@@ -106,7 +106,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 eprintln!("Converting to {}...", converted.display());
-                convert_audio(&result.audio_path, &converted, cover)?;
+                let fw = StdFileWriter;
+                convert_audio(&result.audio_path, &converted, cover, &fw)?;
 
                 // Clean up original if we converted to a different file
                 if converted != result.audio_path {

@@ -90,6 +90,85 @@ pub trait JsRunner: Send + Sync {
     fn run(&self, input: &str) -> Result<String, Error>;
 }
 
+pub trait WriteSeek: Send + std::io::Write {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> Result<u64, std::io::Error>;
+    fn set_len(&mut self, len: u64) -> Result<(), std::io::Error>;
+}
+
+pub trait FileWriter: Send + Sync {
+    fn ensure_dir(&self, path: &Path) -> Result<(), Error>;
+    fn write_all(&self, path: &Path, data: &[u8]) -> Result<(), Error>;
+    fn open_append(&self, path: &Path) -> Result<Box<dyn WriteSeek>, Error>;
+    fn file_size(&self, path: &Path) -> Result<Option<u64>, Error>;
+    fn set_len(&self, path: &Path, len: u64) -> Result<(), Error>;
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), Error>;
+    fn remove_file(&self, path: &Path) -> Result<(), Error>;
+}
+
+struct StdFileHandle(std::fs::File);
+
+impl std::io::Write for StdFileHandle {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl WriteSeek for StdFileHandle {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        std::io::Seek::seek(&mut self.0, pos)
+    }
+    fn set_len(&mut self, len: u64) -> std::io::Result<()> {
+        self.0.set_len(len)
+    }
+}
+
+pub struct StdFileWriter;
+
+impl FileWriter for StdFileWriter {
+    fn ensure_dir(&self, path: &Path) -> Result<(), Error> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
+    }
+
+    fn write_all(&self, path: &Path, data: &[u8]) -> Result<(), Error> {
+        std::fs::write(path, data).map_err(Into::into)
+    }
+
+    fn open_append(&self, path: &Path) -> Result<Box<dyn WriteSeek>, Error> {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Box::new(StdFileHandle(file)))
+    }
+
+    fn file_size(&self, path: &Path) -> Result<Option<u64>, Error> {
+        match std::fs::metadata(path) {
+            Ok(meta) => Ok(Some(meta.len())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(Error::Other(format!("failed to stat {}: {}", path.display(), e))),
+        }
+    }
+
+    fn set_len(&self, path: &Path, len: u64) -> Result<(), Error> {
+        let file = std::fs::OpenOptions::new().write(true).open(path)?;
+        file.set_len(len).map_err(Into::into)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<(), Error> {
+        std::fs::rename(from, to).map_err(Into::into)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<(), Error> {
+        std::fs::remove_file(path).map_err(Into::into)
+    }
+}
+
 pub struct NodeJsRunner {
     solver_path: PathBuf,
 }
@@ -138,6 +217,7 @@ pub struct YoutubeClient {
     #[allow(dead_code)]
     proxy: Option<String>,
     js_runner: Arc<dyn JsRunner>,
+    file_writer: Arc<dyn FileWriter>,
 }
 
 impl YoutubeClient {
@@ -156,6 +236,7 @@ impl YoutubeClient {
             client: builder.build()?,
             proxy,
             js_runner: Arc::new(NodeJsRunner::default()),
+            file_writer: Arc::new(StdFileWriter),
         })
     }
 
@@ -164,6 +245,13 @@ impl YoutubeClient {
         R: JsRunner + 'static,
     {
         self.js_runner = Arc::new(runner);
+    }
+
+    pub fn set_file_writer<W>(&mut self, writer: W)
+    where
+        W: FileWriter + 'static,
+    {
+        self.file_writer = Arc::new(writer);
     }
 
 
@@ -206,7 +294,8 @@ impl YoutubeClient {
             if bytes.len() < 1000 {
                 continue;
             }
-            std::fs::write(path, &bytes)?;
+            self.file_writer.ensure_dir(path)?;
+            self.file_writer.write_all(path, &bytes)?;
             return Ok(());
         }
         Err(Error::Other("Failed to download thumbnail".into()))
@@ -223,7 +312,7 @@ impl YoutubeClient {
 /// ffmpeg will re-encode automatically.
 ///
 /// Requires `ffmpeg` to be on PATH.
-pub fn convert_audio(input: &Path, output: &Path, cover: Option<&Path>) -> Result<(), Error> {
+pub fn convert_audio(input: &Path, output: &Path, cover: Option<&Path>, fw: &dyn FileWriter) -> Result<(), Error> {
     // If input == output, ffmpeg can't edit in-place, use a temp file
     let need_temp = input == output;
     let actual_output = if need_temp {
@@ -253,13 +342,13 @@ pub fn convert_audio(input: &Path, output: &Path, cover: Option<&Path>) -> Resul
     let status = cmd.status()?;
     if !status.success() {
         if need_temp {
-            let _ = std::fs::remove_file(&actual_output);
+            let _ = fw.remove_file(&actual_output);
         }
         return Err(Error::Other(format!("ffmpeg exited with {}", status)));
     }
 
     if need_temp {
-        std::fs::rename(&actual_output, output)?;
+        fw.rename(&actual_output, output)?;
     }
 
     Ok(())
@@ -1305,6 +1394,7 @@ async fn download_stream_file(
     output_path: &Path,
     player_js: Option<&str>,
     js_runner: &dyn JsRunner,
+    fw: &dyn FileWriter,
 ) -> Result<(), Error> {
     eprintln!("download flow: enter download_stream_file path={}", output_path.display());
     let playlist_url = solve_n_in_url_with_runner(playlist_url, player_js, js_runner)?;
@@ -1312,21 +1402,11 @@ async fn download_stream_file(
     let text = client.get(&playlist_url).send().await?.text().await?;
     let base_url =
         reqwest::Url::parse(&playlist_url).map_err(|e| Error::Other(format!("invalid playlist URL: {}", e)))?;
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            Error::Other(format!(
-                "failed to create parent dir {}: {}",
-                parent.display(),
-                e
-            ))
-        })?;
-    }
+    fw.ensure_dir(output_path)?;
     eprintln!("download flow: stream parent ready path={}", output_path.display());
     eprintln!("download target: audio={}", output_path.display());
     eprintln!("opening stream file: {}", output_path.display());
-    let mut file = std::fs::File::create(output_path).map_err(|e| {
-        Error::Other(format!("failed to create {}: {}", output_path.display(), e))
-    })?;
+    let mut file = fw.open_append(output_path)?;
 
     for line in text.lines() {
         let line = line.trim();
@@ -1635,36 +1715,16 @@ async fn download_file(
     url: &str,
     path: &Path,
     total_size: u64,
+    fw: &dyn FileWriter,
 ) -> Result<(), Error> {
     eprintln!("download flow: enter download_file path={}", path.display());
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            Error::Other(format!(
-                "failed to create parent dir {}: {}",
-                parent.display(),
-                e
-            ))
-        })?;
-    }
+    fw.ensure_dir(path)?;
     eprintln!("download flow: parent ready path={}", path.display());
     eprintln!("download target: audio={}", path.display());
-    let existing = match std::fs::metadata(path) {
-        Ok(meta) => {
-            if meta.len() <= total_size {
-                meta.len()
-            } else {
-                0
-            }
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
-        Err(e) => {
-            eprintln!("download flow: stat failed path={} err={}", path.display(), e);
-            return Err(Error::Other(format!(
-                "failed to stat {}: {}",
-                path.display(),
-                e
-            )));
-        }
+    let existing = match fw.file_size(path)? {
+        Some(len) if len <= total_size => len,
+        Some(_) => 0,
+        None => 0,
     };
 
     let mut downloaded = existing;
@@ -1675,11 +1735,7 @@ async fn download_file(
         existing,
         total_size
     );
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| Error::Other(format!("failed to open {} for append: {}", path.display(), e)))?;
+    let mut file = fw.open_append(path)?;
 
     while downloaded < total_size {
         let range_start = downloaded;
@@ -2114,13 +2170,14 @@ async fn run_download(
         None
     };
 
+    let fw = yc.file_writer.as_ref();
     let audio_path = if let Some(manifest_url) = sd.hls_manifest_url.as_deref() {
         if let Some(media_playlist_url) =
             fetch_hls_audio_stream(&client, manifest_url, player_js.as_deref(), yc.js_runner.as_ref()).await?
         {
             let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.m4a", safe_title));
             eprintln!("download target 1: audio={}", audio_path.display());
-            download_stream_file(&client, &media_playlist_url, &audio_path, player_js.as_deref(), yc.js_runner.as_ref()).await?;
+            download_stream_file(&client, &media_playlist_url, &audio_path, player_js.as_deref(), yc.js_runner.as_ref(), fw).await?;
             audio_path
         } else {
             let fmt = fmt.ok_or("No suitable audio format found")?;
@@ -2129,7 +2186,7 @@ async fn run_download(
             eprintln!("download target 2: audio={}", audio_path.display());
             let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
             let content_length = fmt.content_length.ok_or("Unknown content length")?;
-            download_file(&client, &audio_url, &audio_path, content_length).await?;
+            download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
             audio_path
         }
     } else {
@@ -2140,7 +2197,7 @@ async fn run_download(
         let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
         eprintln!("download target 3 done");
         let content_length = fmt.content_length.ok_or("Unknown content length")?;
-        download_file(&client, &audio_url, &audio_path, content_length).await?;
+        download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
         audio_path
     };
 
@@ -2154,7 +2211,7 @@ async fn run_download(
     };
 
     let subtitle_paths =
-        fetch_subtitles(&client, &pr, &opts.output_dir, &safe_title, &opts.lang).await?;
+        fetch_subtitles(&client, &pr, &opts.output_dir, &safe_title, &opts.lang, fw).await?;
 
     Ok(DownloadResult {
         audio_path,
@@ -2169,6 +2226,7 @@ async fn fetch_subtitles(
     output_dir: &str,
     safe_title: &str,
     lang: &Option<String>,
+    fw: &dyn FileWriter,
 ) -> Result<Vec<PathBuf>, Error> {
     let tracks: Vec<&CaptionTrack> = pr
         .captions
@@ -2200,9 +2258,7 @@ async fn fetch_subtitles(
         let sub_url = format!("{}&fmt=json3", track.base_url);
         match fetch_subtitle(client, &sub_url).await {
             Ok(srt_content) if !srt_content.is_empty() => {
-                std::fs::write(&srt_path, &srt_content).map_err(|e| {
-                    Error::Other(format!("failed to write {}: {}", srt_path.display(), e))
-                })?;
+                fw.write_all(&srt_path, srt_content.as_bytes())?;
                 paths.push(srt_path);
             }
             _ => {}
