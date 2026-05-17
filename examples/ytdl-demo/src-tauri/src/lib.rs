@@ -2,26 +2,34 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "android")]
+use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
+#[cfg(not(target_os = "android"))]
 use tauri::webview::PageLoadPayload;
+#[cfg(not(target_os = "android"))]
 use tauri::WebviewUrl;
+#[cfg(not(target_os = "android"))]
+use tauri::WebviewWindow;
 use ytdl_audio::{DownloadOpts, JsRunner, YoutubeClient};
 
 #[cfg(target_os = "android")]
 use jni::objects::{JObject, JString, JValue};
 #[cfg(target_os = "android")]
 use jni::JavaVM;
-#[cfg(target_os = "android")]
-use std::sync::{Mutex, OnceLock};
+#[cfg(not(target_os = "android"))]
+use std::sync::mpsc;
 #[cfg(target_os = "android")]
 static ANDROID_EXTERNAL_DATA_DIR: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 #[cfg(target_os = "android")]
 static ANDROID_ACTIVITY_VM: OnceLock<Mutex<Option<JavaVM>>> = OnceLock::new();
 #[cfg(target_os = "android")]
 static ANDROID_ACTIVITY_GLOBAL: OnceLock<Mutex<Option<jni::objects::GlobalRef>>> = OnceLock::new();
+#[cfg(not(target_os = "android"))]
 static SOLVER_WINDOW_READY: std::sync::OnceLock<std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>> =
     std::sync::OnceLock::new();
 const MAIN_WINDOW_LABEL: &str = "main";
+#[cfg(not(target_os = "android"))]
 const SOLVER_WINDOW_LABEL: &str = "solver";
 const YOUTUBE_URL: &str = "https://www.youtube.com";
 const COOKIE_FILE_NAME: &str = "ytdl-demo-youtube-cookies.txt";
@@ -38,6 +46,7 @@ struct DownloadOutcome {
 }
 
 struct WebviewJsRunner {
+    #[cfg(not(target_os = "android"))]
     app: tauri::AppHandle,
 }
 
@@ -241,6 +250,7 @@ fn main_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
         .ok_or_else(|| "main window not found".to_string())
 }
 
+#[cfg(not(target_os = "android"))]
 fn solver_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
     if let Some(window) = app.get_webview_window(SOLVER_WINDOW_LABEL) {
         return Ok(window);
@@ -271,10 +281,12 @@ fn solver_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String>
         .map_err(|e| format!("failed to create solver window: {}", e))
 }
 
+#[cfg(not(target_os = "android"))]
 fn solver_ready_state() -> &'static std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)> {
     SOLVER_WINDOW_READY.get_or_init(|| std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new())))
 }
 
+#[cfg(not(target_os = "android"))]
 fn wait_for_solver_window_ready(app: &tauri::AppHandle) -> Result<(), ytdl_audio::Error> {
     let _ = solver_window(app).map_err(ytdl_audio::Error::Other)?;
     let state = solver_ready_state();
@@ -497,6 +509,7 @@ fn runtime_log_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn app_work_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     #[cfg(target_os = "android")]
     {
+        let _ = app;
         let dir = ANDROID_EXTERNAL_DATA_DIR
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -643,10 +656,9 @@ fn open_browser(app: tauri::AppHandle) -> Result<(), String> {
 fn open_browser_devtools(app: tauri::AppHandle) -> Result<(), String> {
     runtime_log(&app, "open browser devtools: requested");
     ensure_browser_window(&app).map_err(|e| e.to_string())?;
-    let window = main_window(&app)?;
-
     #[cfg(not(target_os = "android"))]
     {
+        let window = main_window(&app)?;
         window.open_devtools();
         runtime_log(&app, "open browser devtools: ok");
         return Ok(());
@@ -718,7 +730,10 @@ async fn test_download(
     );
     let client = YoutubeClient::new(proxy.as_deref()).map_err(|e| e.to_string())?;
     let mut client = client;
+    #[cfg(not(target_os = "android"))]
     client.set_js_runner(WebviewJsRunner { app: app.clone() });
+    #[cfg(target_os = "android")]
+    client.set_js_runner(WebviewJsRunner {});
     runtime_log(&app, "download: js runner set to webview");
     runtime_log(&app, "download: calling yt-dlp-rs download()");
     let result = client
