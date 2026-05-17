@@ -1,0 +1,194 @@
+--------- beginning of main
+05-10 21:45:02.772 31171 31171 E Zygote  : process_name_ptr:31171 com.afeather.ytdl_demo
+05-10 21:45:02.786 31171 31171 E ather.ytdl_demo: Not starting debugger since process cannot load the jdwp agent.
+05-10 21:45:02.794 31171 31171 I MessageMonitor: Load libmiui_runtime
+05-10 21:45:02.813 31171 31171 D CompatibilityChangeReporter: Compat change id reported: 171979766; UID 10397; state: ENABLED
+05-10 21:45:02.821 31171 31171 W ziparchive: Unable to open '/data/app/~~6E1gjs7RHTVxKQTUWH3N7g==/com.afeather.ytdl_demo-Krl70X_4KPVahiYblJagJw==/base.dm': No such file or directory
+05-10 21:45:02.821 31171 31171 W ziparchive: Unable to open '/data/app/~~6E1gjs7RHTVxKQTUWH3N7g==/com.afeather.ytdl_demo-Krl70X_4KPVahiYblJagJw==/base.dm': No such file or directory
+05-10 21:45:02.836 31171  8075 D AppScoutStateMachine: 31171-ScoutStateMachinecreated
+05-10 21:45:02.854 31171 31171 I Perf    : Connecting to perf service.
+05-10 21:45:02.857 31171 31171 V GraphicsEnvironment: ANGLE Developer option for 'com.afeather.ytdl_demo' set to: 'default'
+05-10 21:45:02.857 31171 31171 V GraphicsEnvironment: ANGLE GameManagerService for com.afeather.ytdl_demo: false
+05-10 21:45:02.857 31171 31171 V GraphicsEnvironment: App is not on the allowlist for updatable production driver.
+05-10 21:45:02.860 31171 31171 I ForceDarkHelperStubImpl: initialize for com.afeather.ytdl_demo , ForceDarkOrigin
+05-10 21:45:02.861 31171 31171 D ather.ytdl_demo: JNI_OnLoad success
+05-10 21:45:02.861 31171 31171 I MiuiForceDarkConfig: setConfig density:3.000000, mainRule:0, secondaryRule:0, tertiaryRule:0
+05-10 21:45:02.863 31171 31171 D NetworkSecurityConfig: No Network Security Config specified, using platform default
+05-10 21:45:02.863 31171 31171 D NetworkSecurityConfig: No Network Security Config specified, using platform default
+05-10 21:45:02.889 31171 31171 D MiuiMultiWindowAdapter: MiuiMultiWindowAdapter::getFreeformVideoWhiteListInSystem::LIST_ABOUT_SUPPORT_LANDSCAPE_VIDEO = [com.hunantv.imgo.activity, com.tencent.qqlive, com.qiyi.video, com.hunantv.imgo.activity.inter, com.tencent.qqlivei18n, com.iqiyi.i18n, tv.danmaku.bili]
+05-10 21:45:02.918 31171 31171 D AppCompatDelegate: Checking for metadata for AppLocalesMetadataHolderService : Service not found
+05-10 21:45:02.930 31171 31171 D IS_CTS_MODE: false
+05-10 21:45:02.930 31171 31171 D MULTI_WINDOW_ENABLED: false
+05-10 21:45:02.931 31171 31171 D DecorView[]: getWindowModeFromSystem  windowmode is 1
+05-10 21:45:02.975 31171 31171 W libc    : Access denied finding property "ro.vendor.df.effect.conflict"
+05-10 21:45:02.968 31171 31171 W ather.ytdl_demo: type=1400 audit(0.0:37188183): avc: denied { read } for name="u:object_r:vendor_displayfeature_prop:s0" dev="tmpfs" ino=393 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:vendor_displayfeature_prop:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:02.998 31171  8091 D ViewContentFactory: initViewContentFetcherClass
+05-10 21:45:02.998 31171  8091 D ViewContentFactory: getInterceptorPackageInfo
+05-10 21:45:02.999 31171  8091 D ViewContentFactory: getInitialApplication took 1ms
+05-10 21:45:02.999 31171  8091 D ViewContentFactory: packageInfo.packageName: com.miui.catcherpatch
+05-10 21:45:03.004 31171  8091 D ViewContentFactory: initViewContentFetcherClass took 6ms
+05-10 21:45:03.004 31171  8091 I ContentCatcher: ViewContentFetcher : ViewContentFetcher
+05-10 21:45:03.004 31171  8091 D ViewContentFactory: createInterceptor took 6ms
+--------- beginning of system
+05-10 21:45:03.005 31171  8091 E ContentCatcherManager: failed to get ContentCatcherService.
+05-10 21:45:03.005 31171  8091 E ContentCatcherManager: failed to get ContentCatcherService.
+05-10 21:45:03.033 31171 31171 D DecorView[]: getWindowModeFromSystem  windowmode is 1
+05-10 21:45:03.034 31171 31171 D DecorView[]: updateDecorCaptionStatus windowMode is 1
+05-10 21:45:03.041 31171 31171 D FramePredict: FramePredict init: false
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: QUALCOMM build                   : 8f5499ec14, Ie6ef1a0a80
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Build Date                       : 07/14/23
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: EV031.36.08.24
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Local Branch                     : 
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Remote Branch                    : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.1.0.11.00.00.766.892
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Remote Branch                    : NONE
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Reconstruct Branch               : NOTHING
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Build Config                     : S P 12.1.1 AArch64
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+05-10 21:45:03.059 31171  8085 I AdrenoGLES-0: Driver Version                   : 0615.73
+05-10 21:45:03.062 31171  8085 I AdrenoGLES-0: PFP: 0x01710158, ME: 0x00000000
+05-10 21:45:03.063 31171 31171 D VRI[MainActivity]: vri.reportNextDraw android.view.ViewRootImpl.performTraversals:3893 android.view.ViewRootImpl.doTraversal:2625 android.view.ViewRootImpl$TraversalRunnable.run:9661 android.view.Choreographer$CallbackRecord.run:1524 android.view.Choreographer$CallbackRecord.run:1532 
+05-10 21:45:03.063 31171 31171 D VRI[MainActivity]: vri.Setup new sync id=0 syncSeqId=0
+05-10 21:45:03.071 31171  8085 W libc    : Access denied finding property "vendor.migl.debug"
+05-10 21:45:03.073 31171  8085 E libEGL  : pre_cache appList: com.sina.weibo,com.ss.android.article.news,com.taobao.taobao,com.smile.gifmaker,com.ss.android.ugc.aweme,com.tencent.mm,tv.danmaku.bili,
+05-10 21:45:03.078 31171  8085 D ather.ytdl_demo: MiuiProcessManagerServiceStub setSchedFifo
+05-10 21:45:03.078 31171  8085 I MiuiProcessManagerImpl: setSchedFifo pid:31171, mode:3
+05-10 21:45:03.081 31171  8085 E libEGL  : pre_cache appList: com.sina.weibo,com.ss.android.article.news,com.taobao.taobao,com.smile.gifmaker,com.ss.android.ugc.aweme,com.tencent.mm,tv.danmaku.bili,
+05-10 21:45:03.088 31171 31171 W RenderThread: type=1400 audit(0.0:37188184): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:03.094 31171  8085 E perf_hint: Session creation failed, mPreferredRateNanos: -1
+05-10 21:45:03.095 31171 31171 D VRI[MainActivity]: vri.reportDrawFinished syncSeqId=0 android.view.ViewRootImpl.lambda$createSyncIfNeeded$4$android-view-ViewRootImpl:3961 android.view.ViewRootImpl$$ExternalSyntheticLambda1.run:6 android.os.Handler.handleCallback:942 android.os.Handler.dispatchMessage:99 android.os.Looper.loopOnce:211 
+05-10 21:45:03.098 31171 31171 W OnBackInvokedCallback: OnBackInvokedCallback is not enabled for the application.
+05-10 21:45:03.098 31171 31171 W OnBackInvokedCallback: Set 'android:enableOnBackInvokedCallback="true"' in the application manifest.
+05-10 21:45:03.108 31171 31171 I WebViewFactory: Loading com.google.android.webview version 146.0.7680.31 (code 768003113)
+05-10 21:45:03.110 31171 31171 D ApplicationLoaders: Returning zygote-cached class loader: /system/framework/android.test.base.jar
+05-10 21:45:03.128 31171 31171 I cr_WVCFactoryProvider: version=146.0.7680.31 (768003113) minSdkVersion=29 multiprocess=true packageId=127 splits=<none>
+05-10 21:45:03.135 31171  8106 I chromium: [0510/214503.135080:INFO:android_webview/browser/variations/variations_seed_loader.cc:67] Failed to open file for reading.: No such file or directory (2)
+05-10 21:45:03.135 31171  8092 I RustStdoutStderr: [0510/214503.135080:INFO:android_webview/browser/variations/variations_seed_loader.cc:67] Failed to open file for reading.: No such file or directory (2)
+05-10 21:45:03.143 31171 31171 I cr_LibraryLoader: Successfully loaded native library
+05-10 21:45:03.144 31171 31171 I cr_CachingUmaRecorder: Flushed 20 samples from 19 histograms, 0 samples were dropped.
+05-10 21:45:03.146 31171 31171 I cr_ChildProcLH: ScopedServiceBindingBatch.tryActivate: false
+05-10 21:45:03.147 31171 31171 I cr_CombinedPProvider: #registerProvider() provider:WV.rk@70a28 isPolicyCacheEnabled:false policyProvidersSize:0
+05-10 21:45:03.148 31171 31171 I cr_PolicyProvider: #setManagerAndSource() 0
+05-10 21:45:03.151 31171 31171 I cr_DisplayManager: Is Display Topology available: false
+05-10 21:45:03.163 31171 31171 I cr_CombinedPProvider: #linkNativeInternal() 1
+05-10 21:45:03.163 31171 31171 D CompatibilityChangeReporter: Compat change id reported: 183155436; UID 10397; state: ENABLED
+05-10 21:45:03.164 31171 31171 I cr_AppResProvider: #getApplicationRestrictionsFromUserManager() Bundle[EMPTY_PARCEL]
+05-10 21:45:03.164 31171 31171 I cr_PolicyProvider: #notifySettingsAvailable() 0
+05-10 21:45:03.164 31171 31171 I cr_CombinedPProvider: #onSettingsAvailable() 0
+05-10 21:45:03.164 31171 31171 I cr_CombinedPProvider: #flushPolicies()
+05-10 21:45:03.186 31171 31171 W cr_PlatformSer-Internal: Installed GMS is version 231015045 but minimum supported version is 232900000
+05-10 21:45:03.187 31171  8124 W chromium: [WARNING:net/dns/dns_config_service_android.cc:69] Failed to read DnsConfig.
+05-10 21:45:03.187 31171  8092 I RustStdoutStderr: [WARNING:net/dns/dns_config_service_android.cc:69] Failed to read DnsConfig.
+05-10 21:45:03.190 31171 31171 W chromium: [WARNING:android_webview/browser/network_service/net_helpers.cc:137] HTTP Cache size is: 20971520
+05-10 21:45:03.190 31171  8092 I RustStdoutStderr: [WARNING:android_webview/browser/network_service/net_helpers.cc:137] HTTP Cache size is: 20971520
+05-10 21:45:03.206 31171 31171 D CompatibilityChangeReporter: Compat change id reported: 214741472; UID 10397; state: ENABLED
+05-10 21:45:03.213 31171 31171 D CompatibilityChangeReporter: Compat change id reported: 171228096; UID 10397; state: ENABLED
+05-10 21:45:03.242 31171 31171 D CompatibilityChangeReporter: Compat change id reported: 193247900; UID 10397; state: ENABLED
+05-10 21:45:03.253 31171  8171 I CameraManagerGlobal: Connecting to camera service
+05-10 21:45:03.257 31171  8171 D CameraExtStub: init android.hardware.camera2.impl.CameraExtImplXiaoMi
+05-10 21:45:03.257 31171  8171 D CameraInjector: waitForResult: 
+05-10 21:45:03.257 31171  8174 D CameraInjector: updateCloudCameraControllerInfoAsync: E
+05-10 21:45:03.259 31171 31171 D vulkan  : searching for layers in '/data/app/~~6E1gjs7RHTVxKQTUWH3N7g==/com.afeather.ytdl_demo-Krl70X_4KPVahiYblJagJw==/lib/arm64'
+05-10 21:45:03.259 31171 31171 D vulkan  : searching for layers in '/data/app/~~6E1gjs7RHTVxKQTUWH3N7g==/com.afeather.ytdl_demo-Krl70X_4KPVahiYblJagJw==/base.apk!/lib/arm64-v8a'
+05-10 21:45:03.266 31171 31171 I AdrenoVK-0: ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+05-10 21:45:03.266 31171 31171 I AdrenoVK-0: ===== END DUMP OF OVERRIDDEN SETTINGS =====
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: QUALCOMM build          : 8f5499ec14, Ie6ef1a0a80
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Build Date              : 07/14/23
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Shader Compiler Version : EV031.36.08.24
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Local Branch            : 
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Remote Branch           : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.1.0.11.00.00.766.892
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Remote Branch           : NONE
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Reconstruct Branch      : NOTHING
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Build Config            : S P 12.1.1 AArch64
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Driver Version          : 0615.73
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: PFP                     : 0x01710158
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: ME                      : 0x00000000
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Application Name    : 
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Application Version : 0x00000001
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Engine Name         : 
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Engine Version      : 0x00000001
+05-10 21:45:03.269 31171 31171 I AdrenoVK-0: Api Version         : 0x00403000
+05-10 21:45:03.275 31171  8174 D CameraInjector: updateCloudCameraControllerInfoAsync: X
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.275 31171  8171 W CameraManagerGlobal: [soar.cts] ignore the status update of camera: 2
+05-10 21:45:03.275 31171  8171 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.275 31171  8171 D CameraInjector: waitForResult: 
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.275 31171  8171 W CameraManagerGlobal: [soar.cts] ignore the status update of camera: 3
+05-10 21:45:03.275 31171  8171 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.275 31171  8171 D CameraInjector: waitForResult: 
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.275 31171  8171 W CameraManagerGlobal: [soar.cts] ignore the status update of camera: 4
+05-10 21:45:03.275 31171  8171 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.275 31171  8171 D CameraInjector: waitForResult: 
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.275 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.276 31171  8171 W CameraManagerGlobal: [soar.cts] ignore the status update of camera: 5
+05-10 21:45:03.276 31171  8171 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.276 31171  8171 D CameraInjector: waitForResult: 
+05-10 21:45:03.276 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.276 31171  8171 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.276 31171  8171 W CameraManagerGlobal: [soar.cts] ignore the status update of camera: 6
+05-10 21:45:03.276 31171  8071 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.276 31171  8071 D CameraInjector: waitForResult: 
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.276 31171  8071 W CameraManagerGlobal: ignore the torch status update of camera: 2
+05-10 21:45:03.276 31171  8071 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.276 31171  8071 D CameraInjector: waitForResult: 
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.276 31171  8071 W CameraManagerGlobal: ignore the torch status update of camera: 3
+05-10 21:45:03.276 31171  8071 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.276 31171  8071 D CameraInjector: waitForResult: 
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.276 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.277 31171  8071 W CameraManagerGlobal: ignore the torch status update of camera: 4
+05-10 21:45:03.277 31171  8071 D CameraInjector: updateCloudCameraControllerInfoAsync: has aleardy start update task.
+05-10 21:45:03.277 31171  8071 D CameraInjector: waitForResult: 
+05-10 21:45:03.277 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+05-10 21:45:03.277 31171  8071 W libc    : Access denied finding property "vendor.camera.aux.packagelistext"
+05-10 21:45:03.277 31171  8071 W CameraManagerGlobal: ignore the torch status update of camera: 5
+05-10 21:45:03.276 31171 31171 W RenderThread: type=1400 audit(0.0:37188185): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:03.288 31171  8147 W cr_media: BLUETOOTH_CONNECT permission is missing.
+05-10 21:45:03.288 31171  8147 W cr_media: getBluetoothAdapter() requires BLUETOOTH permission
+05-10 21:45:03.288 31171  8147 W cr_media: registerBluetoothIntentsIfNeeded: Requires BLUETOOTH permission
+05-10 21:45:03.293 31171 31171 D DecorView[]: onWindowFocusChanged hasWindowFocus true
+05-10 21:45:03.294 31171 31171 I HandWritingStubImpl: refreshLastKeyboardType: 1
+05-10 21:45:03.294 31171 31171 I HandWritingStubImpl: getCurrentKeyboardType: 1
+05-10 21:45:03.314 31171 31171 I HandWritingStubImpl: getCurrentKeyboardType: 1
+05-10 21:45:03.320 31171 31171 W RenderThread: type=1400 audit(0.0:37188186): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:03.336 31171 31171 W RenderThread: type=1400 audit(0.0:37188187): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:03.399 31171  8166 W AudioCapabilities: Unsupported mime audio/alac
+05-10 21:45:03.399 31171  8166 W AudioCapabilities: Unsupported mime audio/x-ape
+05-10 21:45:03.399 31171  8166 W AudioCapabilities: Unsupported mime audio/evrc
+05-10 21:45:03.400 31171  8166 W AudioCapabilities: Unsupported mime audio/qcelp
+05-10 21:45:03.400 31171  8166 W AudioCapabilities: Unsupported mime audio/dsd
+05-10 21:45:03.400 31171  8166 W AudioCapabilities: Unsupported mime audio/amr-wb-plus
+05-10 21:45:03.400 31171  8166 W AudioCapabilities: Unsupported mime audio/x-ms-wma
+05-10 21:45:03.401 31171  8166 W AudioCapabilities: Unsupported mime audio/evrc
+05-10 21:45:03.401 31171  8166 W AudioCapabilities: Unsupported mime audio/qcelp
+05-10 21:45:03.401 31171  8166 W AudioCapabilities: Unsupported mime audio/alac
+05-10 21:45:03.401 31171  8166 W AudioCapabilities: Unsupported mime audio/x-ape
+05-10 21:45:03.404 31171  8166 W VideoCapabilities: Unsupported mime image/vnd.android.heic
+05-10 21:45:03.405 31171  8166 W VideoCapabilities: Unsupported mime image/vnd.android.heic
+05-10 21:45:03.405 31171  8166 W VideoCapabilities: Unsupported mime video/dolby-vision
+05-10 21:45:03.405 31171  8166 W VideoCapabilities: Unsupported mime video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown level: 2048 for profile 32 of codec video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown profile: 16 for codec video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown level: 2048 for profile 256 of codec video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown level: 2048 for profile 32 of codec video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown profile: 16 for codec video/dolby-vision
+05-10 21:45:03.408 31171  8166 W cr_VAUtil: Unknown level: 2048 for profile 256 of codec video/dolby-vision
+05-10 21:45:03.780 31171 31171 W RenderThread: type=1400 audit(0.0:37188188): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.900 31171 31171 W RenderThread: type=1400 audit(0.0:37188189): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.912 31171 31171 W RenderThread: type=1400 audit(0.0:37188190): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.928 31171 31171 W RenderThread: type=1400 audit(0.0:37188191): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.944 31171 31171 W RenderThread: type=1400 audit(0.0:37188192): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.964 31171 31171 W RenderThread: type=1400 audit(0.0:37188193): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.976 31171 31171 W RenderThread: type=1400 audit(0.0:37188194): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:04.992 31171 31171 W RenderThread: type=1400 audit(0.0:37188195): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
+05-10 21:45:05.008 31171 31171 W RenderThread: type=1400 audit(0.0:37188196): avc: denied { getattr } for path="/sys/module/metis/parameters/minor_window_app" dev="sysfs" ino=61675 scontext=u:r:untrusted_app:s0:c141,c257,c512,c768 tcontext=u:object_r:sysfs_migt:s0 tclass=file permissive=0 app=com.termux
