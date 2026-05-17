@@ -128,7 +128,7 @@ impl WebviewJsRunner {
 }})()"#,
             core_code = include_str!(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../yt-dlp-rs/js/yt.solver.core.js"
+                "/../../../js/yt.solver.core.js"
             ))
         );
         window
@@ -195,7 +195,7 @@ fn run_hidden_android_solver(input: &str) -> Result<String, ytdl_audio::Error> {
     let core_java = env
         .new_string(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../yt-dlp-rs/js/yt.solver.core.js"
+            "/../../../js/yt.solver.core.js"
         )))
         .map_err(|e| ytdl_audio::Error::Other(format!("failed to allocate solver core string: {}", e)))?;
     let result = env

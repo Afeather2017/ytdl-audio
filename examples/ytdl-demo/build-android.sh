@@ -74,7 +74,7 @@ ALIGNED_APK="${UNSIGNED_APK%unsigned.apk}aligned.apk"
 
 echo
 echo "[4/5] Signing AAB..."
-UNSIGNED_AAB="$(find "$AAB_GLOB" -type f -name '*.aab' | sort | tail -n 1 || true)"
+UNSIGNED_AAB="$(find "$AAB_GLOB" -type f -name '*.aab' ! -name '*-signed*' | sort | tail -n 1 || true)"
 SIGNED_AAB=""
 if [ -n "$UNSIGNED_AAB" ]; then
     SIGNED_AAB="${UNSIGNED_AAB%.aab}-signed.aab"
