@@ -1,6 +1,6 @@
 use clap::Parser;
 use std::path::PathBuf;
-use ytdl_audio::{convert_audio, DownloadOpts, StdFileWriter, YoutubeClient};
+use ytdl_audio::{DownloadOpts, StdFileWriter, YoutubeClient, convert_audio};
 
 #[derive(Parser)]
 #[command(name = "ytdl-audio", about = "Download YouTube audio + subtitles")]
@@ -58,7 +58,11 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let proxy = if cli.no_proxy { None } else { cli.proxy.as_deref() };
+    let proxy = if cli.no_proxy {
+        None
+    } else {
+        cli.proxy.as_deref()
+    };
     let client = YoutubeClient::new(proxy)?;
 
     match cli.command {
@@ -88,7 +92,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let final_audio = if format.is_some() || embed_cover {
                 let ext = format.as_deref().unwrap_or_else(|| {
-                    result.audio_path.extension().and_then(|e| e.to_str()).unwrap_or("m4a")
+                    result
+                        .audio_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("m4a")
                 });
                 let output_name = result
                     .audio_path
@@ -126,10 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("Thumbnail: {}", t.display());
             }
         }
-        Command::Search {
-            query,
-            max_results,
-        } => {
+        Command::Search { query, max_results } => {
             eprintln!("Searching \"{}\"...", query);
             let videos = client.search(&query, max_results).await?;
             if videos.is_empty() {
@@ -148,10 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     format!(" [{}]", dur)
                 };
                 println!("[{}] {}{}", i + 1, &v.title, meta);
-                println!(
-                    "    {} — https://youtube.com/watch?v={}",
-                    &v.channel, &v.id
-                );
+                println!("    {} — https://youtube.com/watch?v={}", &v.channel, &v.id);
             }
         }
     }

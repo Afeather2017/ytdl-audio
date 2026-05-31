@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use regex::Regex;
-use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use reqwest::StatusCode;
+use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Write;
@@ -9,12 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const INNERTUBE_KEY: &str = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
-const VR_USER_AGENT: &str =
-    "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
-const BROWSER_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-const SAFARI_USER_AGENT: &str =
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)";
+const VR_USER_AGENT: &str = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
+const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const SAFARI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)";
 const WEB_CLIENT_VERSION: &str = "2.20260114.08.00";
 const TV_CLIENT_VERSION: &str = "5.20260114";
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
@@ -90,6 +87,15 @@ pub trait JsRunner: Send + Sync {
     fn run(&self, input: &str) -> Result<String, Error>;
 }
 
+impl<T> JsRunner for Box<T>
+where
+    T: JsRunner + ?Sized,
+{
+    fn run(&self, input: &str) -> Result<String, Error> {
+        (**self).run(input)
+    }
+}
+
 pub trait WriteSeek: Send + std::io::Write {
     fn seek(&mut self, pos: std::io::SeekFrom) -> Result<u64, std::io::Error>;
     fn set_len(&mut self, len: u64) -> Result<(), std::io::Error>;
@@ -151,7 +157,11 @@ impl FileWriter for StdFileWriter {
         match std::fs::metadata(path) {
             Ok(meta) => Ok(Some(meta.len())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(Error::Other(format!("failed to stat {}: {}", path.display(), e))),
+            Err(e) => Err(Error::Other(format!(
+                "failed to stat {}: {}",
+                path.display(),
+                e
+            ))),
         }
     }
 
@@ -190,10 +200,15 @@ impl JsRunner for NodeJsRunner {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         eprintln!("solver flow: spawning node");
-        let mut child = cmd.spawn().map_err(|e| Error::NodeJs(format!("spawn failed: {}", e)))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| Error::NodeJs(format!("spawn failed: {}", e)))?;
         eprintln!("solver flow: node spawned");
         {
-            let stdin = child.stdin.as_mut().ok_or_else(|| Error::NodeJs("failed to open node stdin".into()))?;
+            let stdin = child
+                .stdin
+                .as_mut()
+                .ok_or_else(|| Error::NodeJs("failed to open node stdin".into()))?;
             eprintln!("solver flow: writing stdin bytes={}", input.len());
             stdin.write_all(input.as_bytes())?;
         }
@@ -206,9 +221,12 @@ impl JsRunner for NodeJsRunner {
             output.stderr.len()
         );
         if !output.status.success() {
-            return Err(Error::NodeJs(String::from_utf8_lossy(&output.stderr).trim().to_string()));
+            return Err(Error::NodeJs(
+                String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            ));
         }
-        String::from_utf8(output.stdout).map_err(|e| Error::Other(format!("solver output was not utf-8: {}", e)))
+        String::from_utf8(output.stdout)
+            .map_err(|e| Error::Other(format!("solver output was not utf-8: {}", e)))
     }
 }
 
@@ -254,7 +272,6 @@ impl YoutubeClient {
         self.file_writer = Arc::new(writer);
     }
 
-
     pub fn search(
         &self,
         query: &str,
@@ -272,16 +289,9 @@ impl YoutubeClient {
     }
 
     /// Download video thumbnail. Tries maxresdefault first, falls back to hqdefault.
-    pub async fn download_thumbnail(
-        &self,
-        video_id: &str,
-        path: &Path,
-    ) -> Result<(), Error> {
+    pub async fn download_thumbnail(&self, video_id: &str, path: &Path) -> Result<(), Error> {
         let urls = [
-            format!(
-                "https://i.ytimg.com/vi/{}/maxresdefault.jpg",
-                video_id
-            ),
+            format!("https://i.ytimg.com/vi/{}/maxresdefault.jpg", video_id),
             format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
         ];
 
@@ -312,7 +322,12 @@ impl YoutubeClient {
 /// ffmpeg will re-encode automatically.
 ///
 /// Requires `ffmpeg` to be on PATH.
-pub fn convert_audio(input: &Path, output: &Path, cover: Option<&Path>, fw: &dyn FileWriter) -> Result<(), Error> {
+pub fn convert_audio(
+    input: &Path,
+    output: &Path,
+    cover: Option<&Path>,
+    fw: &dyn FileWriter,
+) -> Result<(), Error> {
     // If input == output, ffmpeg can't edit in-place, use a temp file
     let need_temp = input == output;
     let actual_output = if need_temp {
@@ -329,9 +344,16 @@ pub fn convert_audio(input: &Path, output: &Path, cover: Option<&Path>, fw: &dyn
     if let Some(cover_path) = cover {
         cmd.arg("-i").arg(cover_path);
         cmd.args([
-            "-map", "0:a", "-map", "1:v",
-            "-c:a", "copy", "-c:v", "copy",
-            "-disposition:v:0", "attached_pic",
+            "-map",
+            "0:a",
+            "-map",
+            "1:v",
+            "-c:a",
+            "copy",
+            "-c:v",
+            "copy",
+            "-disposition:v:0",
+            "attached_pic",
         ]);
     } else {
         cmd.args(["-c:a", "copy"]);
@@ -490,7 +512,10 @@ fn load_cookie_store_from_netscape(path: &str) -> Result<CookieStore, Error> {
             .map_err(|e| Error::Other(format!("invalid cookie URL {}: {}", url, e)))?;
 
         let cookie = if secure {
-            format!("{}={}; Domain={}; Path={}; Secure", name, value, domain, path)
+            format!(
+                "{}={}; Domain={}; Path={}; Secure",
+                name, value, domain, path
+            )
         } else {
             format!("{}={}; Domain={}; Path={}", name, value, domain, path)
         };
@@ -599,8 +624,8 @@ fn export_browser_cookies(port: u16) -> Result<Vec<CdpCookie>, Error> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let cookies: Vec<CdpCookie> =
-        serde_json::from_str(&stdout).map_err(|e| Error::Other(format!("invalid CDP cookie JSON: {}", e)))?;
+    let cookies: Vec<CdpCookie> = serde_json::from_str(&stdout)
+        .map_err(|e| Error::Other(format!("invalid CDP cookie JSON: {}", e)))?;
     eprintln!("Extracted {} cookies via CDP", cookies.len());
     Ok(cookies)
 }
@@ -644,9 +669,15 @@ fn build_cookie_store_and_auth(cookies: &[CdpCookie]) -> Result<(CookieStore, Au
             .map_err(|e| Error::Other(format!("invalid cookie URL: {}", e)))?;
 
         let cookie = if c.secure {
-            format!("{}={}; Domain={}; Path={}; Secure", c.name, c.value, c.domain, c.path)
+            format!(
+                "{}={}; Domain={}; Path={}; Secure",
+                c.name, c.value, c.domain, c.path
+            )
         } else {
-            format!("{}={}; Domain={}; Path={}", c.name, c.value, c.domain, c.path)
+            format!(
+                "{}={}; Domain={}; Path={}",
+                c.name, c.value, c.domain, c.path
+            )
         };
         store
             .parse(&cookie, &url)
@@ -710,7 +741,10 @@ fn crate_dir() -> PathBuf {
         }
     }
 
-    let mut dir = std::env::current_exe().expect("current exe").canonicalize().ok();
+    let mut dir = std::env::current_exe()
+        .expect("current exe")
+        .canonicalize()
+        .ok();
     while let Some(d) = dir.as_ref() {
         if d.join("js/export_cookies_cdp.mjs").exists() {
             return d.to_path_buf();
@@ -870,8 +904,15 @@ fn parse_ytcfg_context(page_html: &str) -> WatchPageContext {
         .pointer("/INNERTUBE_CONTEXT/client/visitorData")
         .and_then(|x| x.as_str())
         .map(str::to_string)
-        .or_else(|| v.get("VISITOR_DATA").and_then(|x| x.as_str()).map(str::to_string));
-    ctx.session_index = v.get("SESSION_INDEX").and_then(|x| x.as_str()).and_then(|s| s.parse().ok());
+        .or_else(|| {
+            v.get("VISITOR_DATA")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        });
+    ctx.session_index = v
+        .get("SESSION_INDEX")
+        .and_then(|x| x.as_str())
+        .and_then(|s| s.parse().ok());
     ctx.delegated_session_id = v
         .get("DELEGATED_SESSION_ID")
         .and_then(|x| x.as_str())
@@ -885,7 +926,10 @@ fn parse_ytcfg_context(page_html: &str) -> WatchPageContext {
         .get("INNERTUBE_CONTEXT_CLIENT_VERSION")
         .and_then(|x| x.as_str())
         .map(str::to_string);
-    ctx.data_sync_id = v.get("DATASYNC_ID").and_then(|x| x.as_str()).map(str::to_string);
+    ctx.data_sync_id = v
+        .get("DATASYNC_ID")
+        .and_then(|x| x.as_str())
+        .map(str::to_string);
     ctx.sts = v
         .get("STS")
         .and_then(|x| x.as_u64())
@@ -922,7 +966,11 @@ fn parse_client_config(page_html: &str) -> ClientConfig {
             .pointer("/INNERTUBE_CONTEXT/client/visitorData")
             .and_then(|x| x.as_str())
             .map(str::to_string)
-            .or_else(|| v.get("VISITOR_DATA").and_then(|x| x.as_str()).map(str::to_string)),
+            .or_else(|| {
+                v.get("VISITOR_DATA")
+                    .and_then(|x| x.as_str())
+                    .map(str::to_string)
+            }),
     }
 }
 
@@ -930,9 +978,17 @@ fn parse_data_sync_id(value: &str) -> (Option<String>, Option<String>) {
     let Some((left, right)) = value.split_once("||") else {
         return (None, None);
     };
-    let delegated = if right.is_empty() { None } else { Some(left.to_string()) };
+    let delegated = if right.is_empty() {
+        None
+    } else {
+        Some(left.to_string())
+    };
     let user = if right.is_empty() {
-        if left.is_empty() { None } else { Some(left.to_string()) }
+        if left.is_empty() {
+            None
+        } else {
+            Some(left.to_string())
+        }
     } else if right.is_empty() {
         None
     } else {
@@ -1014,7 +1070,10 @@ fn extension_for_mime(mime: &str) -> &'static str {
     }
 }
 
-async fn fetch_video_page(client: &reqwest::Client, video_id: &str) -> Result<(String, String), Error> {
+async fn fetch_video_page(
+    client: &reqwest::Client,
+    video_id: &str,
+) -> Result<(String, String), Error> {
     let url = format!(
         "https://www.youtube.com/watch?v={}&bpctr=9999999999&has_verified=1",
         video_id
@@ -1025,7 +1084,10 @@ async fn fetch_video_page(client: &reqwest::Client, video_id: &str) -> Result<(S
     let resp = client
         .get(&url)
         .header("User-Agent", SAFARI_USER_AGENT)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
         .header("Accept-Language", "en-us,en;q=0.5")
         .header("Sec-Fetch-Mode", "navigate")
         .timeout(std::time::Duration::from_secs(30))
@@ -1078,23 +1140,32 @@ async fn fetch_player_response(
         .await?;
 
     if resp.status() != StatusCode::OK {
-        return Err(Error::Other(format!("API returned status {}", resp.status())));
+        return Err(Error::Other(format!(
+            "API returned status {}",
+            resp.status()
+        )));
     }
 
     Ok(resp.json().await?)
 }
 
-fn pick_audio_format<'a>(formats: &'a [AdaptiveFormat], preferred_itag: &str) -> Option<&'a AdaptiveFormat> {
+fn pick_audio_format<'a>(
+    formats: &'a [AdaptiveFormat],
+    preferred_itag: &str,
+) -> Option<&'a AdaptiveFormat> {
     let target: u32 = preferred_itag.parse().unwrap_or(251);
-    if let Some(fmt) = formats
-        .iter()
-        .find(|f| f.itag == target && f.mime_type.contains("audio") && (f.url.is_some() || f.signature_cipher.is_some()))
-    {
+    if let Some(fmt) = formats.iter().find(|f| {
+        f.itag == target
+            && f.mime_type.contains("audio")
+            && (f.url.is_some() || f.signature_cipher.is_some())
+    }) {
         return Some(fmt);
     }
     formats
         .iter()
-        .filter(|f| f.mime_type.contains("audio") && (f.url.is_some() || f.signature_cipher.is_some()))
+        .filter(|f| {
+            f.mime_type.contains("audio") && (f.url.is_some() || f.signature_cipher.is_some())
+        })
         .max_by_key(|f| f.bitrate)
 }
 
@@ -1105,9 +1176,14 @@ fn parse_signature_cipher(cipher: &str) -> HashMap<String, String> {
 }
 
 fn extract_player_js_url(page_html: &str) -> Option<String> {
-    let re = Regex::new(r#""jsUrl":"([^"]+)"|<script\s+src="([^"]*player[^"]+base\.js[^"]*)""#).ok()?;
+    let re =
+        Regex::new(r#""jsUrl":"([^"]+)"|<script\s+src="([^"]*player[^"]+base\.js[^"]*)""#).ok()?;
     let caps = re.captures(page_html)?;
-    let path = caps.get(1).or_else(|| caps.get(2))?.as_str().replace("\\/", "/");
+    let path = caps
+        .get(1)
+        .or_else(|| caps.get(2))?
+        .as_str()
+        .replace("\\/", "/");
     if path.starts_with("http") {
         Some(path)
     } else if path.starts_with("//") {
@@ -1172,7 +1248,11 @@ fn parse_sig_solver_output(
     let value: serde_json::Value = serde_json::from_str(output)?;
     if value.get("type").and_then(|v| v.as_str()) == Some("error") {
         return Err(Error::SigCipher(
-            value.get("error").and_then(|v| v.as_str()).unwrap_or("unknown solver error").to_string(),
+            value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown solver error")
+                .to_string(),
         ));
     }
     let mut solved_sig = None;
@@ -1239,10 +1319,13 @@ fn resolve_format_url(
     if let Some(url) = &fmt.url {
         eprintln!("resolve flow: direct url path");
         if let Some((base, query)) = url.split_once('?') {
-            let mut params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+            let mut params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+                .into_owned()
+                .collect();
             if let (Some(n), Some(js)) = (params.get("n"), player_js) {
                 eprintln!("resolve flow: direct url has n param, solving");
-                let (_, solved_n) = run_sig_solver_with_runner(js_runner, js, None, Some(n.as_str()))?;
+                let (_, solved_n) =
+                    run_sig_solver_with_runner(js_runner, js, None, Some(n.as_str()))?;
                 if let Some(solved_n) = solved_n {
                     params.insert("n".into(), solved_n);
                     let rebuilt = format!(
@@ -1266,7 +1349,9 @@ fn resolve_format_url(
     };
     let Some(js) = player_js else {
         eprintln!("resolve flow: cipher needs player js but none available");
-        return Err(Error::SigCipher("ciphered format requires player JS".into()));
+        return Err(Error::SigCipher(
+            "ciphered format requires player JS".into(),
+        ));
     };
 
     eprintln!("resolve flow: cipher path");
@@ -1296,7 +1381,9 @@ fn resolve_format_url(
     }
     if let Some(solved_n) = solved_n {
         if let Some((base, query)) = url.split_once('?') {
-            let mut q: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+            let mut q: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+                .into_owned()
+                .collect();
             q.insert("n".into(), solved_n);
             url = format!(
                 "{}?{}",
@@ -1319,8 +1406,9 @@ fn solve_n_in_url_with_runner(
     let Some((base, query)) = url.split_once('?') else {
         return Ok(url.to_string());
     };
-    let mut params: HashMap<String, String> =
-        url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+    let mut params: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect();
     if let (Some(n), Some(js)) = (params.get("n"), player_js) {
         let (_, solved_n) = run_sig_solver_with_runner(js_runner, js, None, Some(n.as_str()))?;
         if let Some(solved_n) = solved_n {
@@ -1374,14 +1462,16 @@ async fn fetch_hls_audio_stream(
             .unwrap_or(0);
         if bandwidth >= best_bandwidth {
             best_bandwidth = bandwidth;
-            best_audio_url = Some(if line.starts_with("http://") || line.starts_with("https://") {
-                line.to_string()
-            } else {
-                reqwest::Url::parse(&manifest_url)
-                    .and_then(|base| base.join(line))
-                    .map(|u| u.to_string())
-                    .map_err(|e| Error::Other(format!("invalid HLS URL {}: {}", line, e)))?
-            });
+            best_audio_url = Some(
+                if line.starts_with("http://") || line.starts_with("https://") {
+                    line.to_string()
+                } else {
+                    reqwest::Url::parse(&manifest_url)
+                        .and_then(|base| base.join(line))
+                        .map(|u| u.to_string())
+                        .map_err(|e| Error::Other(format!("invalid HLS URL {}: {}", line, e)))?
+                },
+            );
         }
     }
 
@@ -1396,14 +1486,20 @@ async fn download_stream_file(
     js_runner: &dyn JsRunner,
     fw: &dyn FileWriter,
 ) -> Result<(), Error> {
-    eprintln!("download flow: enter download_stream_file path={}", output_path.display());
+    eprintln!(
+        "download flow: enter download_stream_file path={}",
+        output_path.display()
+    );
     let playlist_url = solve_n_in_url_with_runner(playlist_url, player_js, js_runner)?;
     eprintln!("Fetching media playlist...");
     let text = client.get(&playlist_url).send().await?.text().await?;
-    let base_url =
-        reqwest::Url::parse(&playlist_url).map_err(|e| Error::Other(format!("invalid playlist URL: {}", e)))?;
+    let base_url = reqwest::Url::parse(&playlist_url)
+        .map_err(|e| Error::Other(format!("invalid playlist URL: {}", e)))?;
     fw.ensure_dir(output_path)?;
-    eprintln!("download flow: stream parent ready path={}", output_path.display());
+    eprintln!(
+        "download flow: stream parent ready path={}",
+        output_path.display()
+    );
     eprintln!("download target: audio={}", output_path.display());
     eprintln!("opening stream file: {}", output_path.display());
     let mut file = fw.open_append(output_path)?;
@@ -1429,7 +1525,12 @@ async fn download_stream_file(
     Ok(())
 }
 
-fn make_sapisidhash(scheme: &str, sid: &str, origin: &str, user_session_id: Option<&str>) -> String {
+fn make_sapisidhash(
+    scheme: &str,
+    sid: &str,
+    origin: &str,
+    user_session_id: Option<&str>,
+) -> String {
     use sha1::{Digest, Sha1};
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1441,7 +1542,10 @@ fn make_sapisidhash(scheme: &str, sid: &str, origin: &str, user_session_id: Opti
         format!("{} {} {}", timestamp, sid, origin)
     };
     let digest = Sha1::digest(input.as_bytes());
-    let hex = digest.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+    let hex = digest
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
     if user_session_id.is_some() {
         format!("{scheme} {}_{}_u", timestamp, hex)
     } else {
@@ -1487,7 +1591,10 @@ fn maybe_add_login_header(headers: &mut reqwest::header::HeaderMap, logged_in: b
     }
 }
 
-fn maybe_add_cookie_auth_headers(headers: &mut reqwest::header::HeaderMap, auth: &AuthContext) -> Result<(), Error> {
+fn maybe_add_cookie_auth_headers(
+    headers: &mut reqwest::header::HeaderMap,
+    auth: &AuthContext,
+) -> Result<(), Error> {
     if let Some(page_id) = auth.delegated_session_id.as_deref() {
         headers.insert(
             "X-Goog-PageId",
@@ -1525,22 +1632,54 @@ async fn fetch_player_response_tv(
         reqwest::header::HeaderValue::from_str(user_agent)
             .map_err(|e| Error::Other(format!("invalid user-agent header: {}", e)))?,
     );
-    headers.insert("Accept", reqwest::header::HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"));
-    headers.insert("Accept-Language", reqwest::header::HeaderValue::from_static("en-us,en;q=0.5"));
-    headers.insert("Connection", reqwest::header::HeaderValue::from_static("keep-alive"));
-    headers.insert("Content-Type", reqwest::header::HeaderValue::from_static("application/json"));
-    headers.insert("Origin", reqwest::header::HeaderValue::from_static("https://www.youtube.com"));
-    headers.insert("X-Origin", reqwest::header::HeaderValue::from_static("https://www.youtube.com"));
-    headers.insert("Sec-Fetch-Mode", reqwest::header::HeaderValue::from_static("navigate"));
-    headers.insert("X-YouTube-Client-Name", reqwest::header::HeaderValue::from_static("7"));
+    headers.insert(
+        "Accept",
+        reqwest::header::HeaderValue::from_static(
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        ),
+    );
+    headers.insert(
+        "Accept-Language",
+        reqwest::header::HeaderValue::from_static("en-us,en;q=0.5"),
+    );
+    headers.insert(
+        "Connection",
+        reqwest::header::HeaderValue::from_static("keep-alive"),
+    );
+    headers.insert(
+        "Content-Type",
+        reqwest::header::HeaderValue::from_static("application/json"),
+    );
+    headers.insert(
+        "Origin",
+        reqwest::header::HeaderValue::from_static("https://www.youtube.com"),
+    );
+    headers.insert(
+        "X-Origin",
+        reqwest::header::HeaderValue::from_static("https://www.youtube.com"),
+    );
+    headers.insert(
+        "Sec-Fetch-Mode",
+        reqwest::header::HeaderValue::from_static("navigate"),
+    );
+    headers.insert(
+        "X-YouTube-Client-Name",
+        reqwest::header::HeaderValue::from_static("7"),
+    );
     headers.insert(
         "X-YouTube-Client-Version",
-        reqwest::header::HeaderValue::from_str(client_version).map_err(|e| Error::Other(format!("invalid client version header: {}", e)))?,
+        reqwest::header::HeaderValue::from_str(client_version)
+            .map_err(|e| Error::Other(format!("invalid client version header: {}", e)))?,
     );
-    if let Some(visitor) = auth.ytcfg_visitor_data.as_deref().or(auth.visitor_data.as_deref()) {
+    if let Some(visitor) = auth
+        .ytcfg_visitor_data
+        .as_deref()
+        .or(auth.visitor_data.as_deref())
+    {
         headers.insert(
             "X-Goog-Visitor-Id",
-            reqwest::header::HeaderValue::from_str(visitor).map_err(|e| Error::Other(format!("invalid visitor header: {}", e)))?,
+            reqwest::header::HeaderValue::from_str(visitor)
+                .map_err(|e| Error::Other(format!("invalid visitor header: {}", e)))?,
         );
     }
     if let Some(session_index) = auth.session_index {
@@ -1553,7 +1692,8 @@ async fn fetch_player_response_tv(
     if let Some(authz) = auth_header_value(auth, "https://www.youtube.com") {
         headers.insert(
             "Authorization",
-            reqwest::header::HeaderValue::from_str(&authz).map_err(|e| Error::Other(format!("invalid authorization header: {}", e)))?,
+            reqwest::header::HeaderValue::from_str(&authz)
+                .map_err(|e| Error::Other(format!("invalid authorization header: {}", e)))?,
         );
     }
     maybe_add_cookie_auth_headers(&mut headers, auth)?;
@@ -1588,7 +1728,8 @@ async fn fetch_player_response_tv(
         }
     });
     if let Some(sts) = auth.sts {
-        body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"] = serde_json::json!(sts);
+        body["playbackContext"]["contentPlaybackContext"]["signatureTimestamp"] =
+            serde_json::json!(sts);
     }
 
     let resp = client
@@ -1619,7 +1760,11 @@ async fn fetch_player_response_web_safari(
         "clientVersion": WEB_CLIENT_VERSION,
         "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)",
     });
-    if let Some(visitor) = auth.ytcfg_visitor_data.as_deref().or(auth.visitor_data.as_deref()) {
+    if let Some(visitor) = auth
+        .ytcfg_visitor_data
+        .as_deref()
+        .or(auth.visitor_data.as_deref())
+    {
         ctx["visitorData"] = serde_json::json!(visitor);
     }
 
@@ -1643,7 +1788,10 @@ async fn fetch_player_response_web_safari(
         req = req.header("X-Goog-PageId", page_id);
     }
     if auth.delegated_session_id.is_some() || auth.session_index.is_some() {
-        req = req.header("X-Goog-AuthUser", auth.session_index.unwrap_or(0).to_string());
+        req = req.header(
+            "X-Goog-AuthUser",
+            auth.session_index.unwrap_or(0).to_string(),
+        );
     }
     if auth.logged_in {
         req = req.header("X-Youtube-Bootstrap-Logged-In", "true");
@@ -1673,12 +1821,19 @@ async fn fetch_player_response_web(
         "browserName": "Chrome",
         "browserVersion": "131.0.0.0",
     });
-    if let Some(visitor) = auth.ytcfg_visitor_data.as_deref().or(auth.visitor_data.as_deref()) {
+    if let Some(visitor) = auth
+        .ytcfg_visitor_data
+        .as_deref()
+        .or(auth.visitor_data.as_deref())
+    {
         ctx["visitorData"] = serde_json::json!(visitor);
     }
 
     let mut req = client
-        .post(format!("https://www.youtube.com/youtubei/v1/player?key={}", INNERTUBE_KEY))
+        .post(format!(
+            "https://www.youtube.com/youtubei/v1/player?key={}",
+            INNERTUBE_KEY
+        ))
         .header("User-Agent", BROWSER_USER_AGENT)
         .header("Origin", "https://www.youtube.com")
         .header("X-Origin", "https://www.youtube.com")
@@ -1697,7 +1852,10 @@ async fn fetch_player_response_web(
         req = req.header("X-Goog-PageId", page_id);
     }
     if auth.delegated_session_id.is_some() || auth.session_index.is_some() {
-        req = req.header("X-Goog-AuthUser", auth.session_index.unwrap_or(0).to_string());
+        req = req.header(
+            "X-Goog-AuthUser",
+            auth.session_index.unwrap_or(0).to_string(),
+        );
     }
     if auth.logged_in {
         req = req.header("X-Youtube-Bootstrap-Logged-In", "true");
@@ -1755,9 +1913,13 @@ async fn download_file(
                 Err(e) => {
                     retry += 1;
                     if retry > 15 {
-                        return Err(Error::Other(format!("connection failed after 15 retries: {}", e)));
+                        return Err(Error::Other(format!(
+                            "connection failed after 15 retries: {}",
+                            e
+                        )));
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs_f64(2.0 * retry as f64)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs_f64(2.0 * retry as f64))
+                        .await;
                     continue;
                 }
             };
@@ -1885,7 +2047,9 @@ async fn search_youtube(
     }
 
     if !html.contains("ytInitialData") {
-        return Err(Error::Other("Failed to get search results after retries".into()));
+        return Err(Error::Other(
+            "Failed to get search results after retries".into(),
+        ));
     }
 
     let start = html.find("ytInitialData").unwrap() + "ytInitialData".len();
@@ -1907,7 +2071,9 @@ async fn search_youtube(
     let mut results = Vec::new();
 
     if let Some(sections) = data
-        .pointer("/contents/twoColumnSearchResultsRenderer/primaryContents/sectionListRenderer/contents")
+        .pointer(
+            "/contents/twoColumnSearchResultsRenderer/primaryContents/sectionListRenderer/contents",
+        )
         .and_then(|v| v.as_array())
     {
         for section in sections {
@@ -1946,8 +2112,14 @@ async fn search_youtube(
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .into(),
-                    duration: vr.pointer("/lengthText/simpleText").and_then(|v| v.as_str()).map(Into::into),
-                    views: vr.pointer("/viewCountText/simpleText").and_then(|v| v.as_str()).map(Into::into),
+                    duration: vr
+                        .pointer("/lengthText/simpleText")
+                        .and_then(|v| v.as_str())
+                        .map(Into::into),
+                    views: vr
+                        .pointer("/viewCountText/simpleText")
+                        .and_then(|v| v.as_str())
+                        .map(Into::into),
                     publish_time: vr
                         .pointer("/publishedTimeText/simpleText")
                         .and_then(|v| v.as_str())
@@ -1975,7 +2147,10 @@ async fn run_download(
 ) -> Result<DownloadResult, Error> {
     let cdp_cookies = if let Some(port_str) = opts.cookies_from_browser.as_deref() {
         let port: u16 = port_str.parse().map_err(|_| {
-            Error::Other(format!("--cookies-from-browser expects a CDP port number, got: {}", port_str))
+            Error::Other(format!(
+                "--cookies-from-browser expects a CDP port number, got: {}",
+                port_str
+            ))
         })?;
         Some(export_browser_cookies(port)?)
     } else {
@@ -1989,7 +2164,10 @@ async fn run_download(
 
     let (pr, client, page_html) = if pr.playability_status.status != "OK" {
         let reason = pr.playability_status.reason.as_deref().unwrap_or("unknown");
-        eprintln!("ANDROID_VR failed: {} — trying tv_downgraded client with cookies...", reason);
+        eprintln!(
+            "ANDROID_VR failed: {} — trying tv_downgraded client with cookies...",
+            reason
+        );
 
         let (cookie_store, mut auth) = if let Some(ref cookies) = cdp_cookies {
             build_cookie_store_and_auth(cookies)?
@@ -2006,14 +2184,13 @@ async fn run_download(
 
         debug_cookie_header(
             &cookie_store,
-            &format!("https://www.youtube.com/watch?v={}&bpctr=9999999999&has_verified=1", video_id),
+            &format!(
+                "https://www.youtube.com/watch?v={}&bpctr=9999999999&has_verified=1",
+                video_id
+            ),
             "watch_page",
         );
-        debug_cookie_header(
-            &cookie_store,
-            "https://www.youtube.com/tv",
-            "youtube_tv",
-        );
+        debug_cookie_header(&cookie_store, "https://www.youtube.com/tv", "youtube_tv");
         debug_cookie_header(
             &cookie_store,
             "https://www.youtube.com/youtubei/v1/player?key=stub",
@@ -2065,7 +2242,8 @@ async fn run_download(
         }
         if page_ctx.data_sync_id.is_some() {
             auth.data_sync_id = page_ctx.data_sync_id.clone();
-            let (delegated, user) = parse_data_sync_id(page_ctx.data_sync_id.as_deref().unwrap_or_default());
+            let (delegated, user) =
+                parse_data_sync_id(page_ctx.data_sync_id.as_deref().unwrap_or_default());
             if auth.delegated_session_id.is_none() {
                 auth.delegated_session_id = delegated;
             }
@@ -2090,7 +2268,9 @@ async fn run_download(
         }
         eprintln!(
             "auth_ctx: visitor={:?} session_index={:?} delegated={:?} user={:?} logged_in={} client_version={:?} data_sync_id={:?} sts={:?} sapisid_present={}",
-            auth.ytcfg_visitor_data.as_deref().or(auth.visitor_data.as_deref()),
+            auth.ytcfg_visitor_data
+                .as_deref()
+                .or(auth.visitor_data.as_deref()),
             auth.session_index,
             auth.delegated_session_id,
             auth.user_session_id,
@@ -2112,19 +2292,31 @@ async fn run_download(
         if tv_pr.playability_status.status == "OK" {
             (tv_pr, cookie_client, web_page_html)
         } else {
-            let tv_reason = tv_pr.playability_status.reason.as_deref().unwrap_or("unknown");
+            let tv_reason = tv_pr
+                .playability_status
+                .reason
+                .as_deref()
+                .unwrap_or("unknown");
             eprintln!("tv_downgraded failed: {} — trying WEB client...", tv_reason);
             let web_pr = fetch_player_response_web(&cookie_client, &video_id, &auth).await?;
             if web_pr.playability_status.status == "OK" {
                 (web_pr, cookie_client, web_page_html)
             } else {
-                let web_reason = web_pr.playability_status.reason.as_deref().unwrap_or("unknown");
+                let web_reason = web_pr
+                    .playability_status
+                    .reason
+                    .as_deref()
+                    .unwrap_or("unknown");
                 eprintln!("WEB failed: {} — trying web_safari client...", web_reason);
-                let safari_pr = fetch_player_response_web_safari(&cookie_client, &video_id, &auth).await?;
+                let safari_pr =
+                    fetch_player_response_web_safari(&cookie_client, &video_id, &auth).await?;
                 if safari_pr.playability_status.status == "OK" {
                     (safari_pr, cookie_client, web_page_html)
                 } else {
-                    let safari_reason = safari_pr.playability_status.reason.unwrap_or_else(|| "unknown".into());
+                    let safari_reason = safari_pr
+                        .playability_status
+                        .reason
+                        .unwrap_or_else(|| "unknown".into());
                     return Err(Error::Other(format!(
                         "Video not playable (tv_downgraded: {}; WEB: {}; web_safari: {})",
                         tv_reason, web_reason, safari_reason
@@ -2172,19 +2364,34 @@ async fn run_download(
 
     let fw = yc.file_writer.as_ref();
     let audio_path = if let Some(manifest_url) = sd.hls_manifest_url.as_deref() {
-        if let Some(media_playlist_url) =
-            fetch_hls_audio_stream(&client, manifest_url, player_js.as_deref(), yc.js_runner.as_ref()).await?
+        if let Some(media_playlist_url) = fetch_hls_audio_stream(
+            &client,
+            manifest_url,
+            player_js.as_deref(),
+            yc.js_runner.as_ref(),
+        )
+        .await?
         {
             let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.m4a", safe_title));
             eprintln!("download target 1: audio={}", audio_path.display());
-            download_stream_file(&client, &media_playlist_url, &audio_path, player_js.as_deref(), yc.js_runner.as_ref(), fw).await?;
+            download_stream_file(
+                &client,
+                &media_playlist_url,
+                &audio_path,
+                player_js.as_deref(),
+                yc.js_runner.as_ref(),
+                fw,
+            )
+            .await?;
             audio_path
         } else {
             let fmt = fmt.ok_or("No suitable audio format found")?;
             let ext = extension_for_mime(&fmt.mime_type);
-            let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.{}", safe_title, ext));
+            let audio_path =
+                PathBuf::from(&opts.output_dir).join(format!("{}.{}", safe_title, ext));
             eprintln!("download target 2: audio={}", audio_path.display());
-            let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
+            let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?
+                .ok_or("Format has no direct URL")?;
             let content_length = fmt.content_length.ok_or("Unknown content length")?;
             download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
             audio_path
@@ -2194,7 +2401,8 @@ async fn run_download(
         let ext = extension_for_mime(&fmt.mime_type);
         let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.{}", safe_title, ext));
         eprintln!("download target 3: audio={}", audio_path.display());
-        let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?.ok_or("Format has no direct URL")?;
+        let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?
+            .ok_or("Format has no direct URL")?;
         eprintln!("download target 3 done");
         let content_length = fmt.content_length.ok_or("Unknown content length")?;
         download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
@@ -2202,8 +2410,7 @@ async fn run_download(
     };
 
     // Thumbnail
-    let thumb_path =
-        PathBuf::from(&opts.output_dir).join(format!("{}.jpg", safe_title));
+    let thumb_path = PathBuf::from(&opts.output_dir).join(format!("{}.jpg", safe_title));
     eprintln!("download target: thumbnail={}", thumb_path.display());
     let thumbnail_path = match yc.download_thumbnail(&video_id, &thumb_path).await {
         Ok(()) => Some(thumb_path),
@@ -2239,10 +2446,17 @@ async fn fetch_subtitles(
                     .iter()
                     .filter(|t| t.language_code.starts_with(l.as_str()))
                     .collect(),
-                None => r.caption_tracks.first().map(|t| vec![t]).unwrap_or_default(),
+                None => r
+                    .caption_tracks
+                    .first()
+                    .map(|t| vec![t])
+                    .unwrap_or_default(),
             };
             if filtered.is_empty() {
-                r.caption_tracks.first().map(|t| vec![t]).unwrap_or_default()
+                r.caption_tracks
+                    .first()
+                    .map(|t| vec![t])
+                    .unwrap_or_default()
             } else {
                 filtered
             }
@@ -2290,8 +2504,14 @@ mod tests {
         let (store, auth) = build_cookie_store_and_auth(&cookies).unwrap();
 
         assert_eq!(auth.sapisid, "1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy");
-        assert_eq!(auth.sapisid_1p.as_deref(), Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy"));
-        assert_eq!(auth.sapisid_3p.as_deref(), Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy"));
+        assert_eq!(
+            auth.sapisid_1p.as_deref(),
+            Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy")
+        );
+        assert_eq!(
+            auth.sapisid_3p.as_deref(),
+            Some("1kWiikMM3do1sRJf/ALCD7UfheVtPEIvhy")
+        );
         assert!(auth.logged_in);
 
         let yt_url = reqwest::Url::parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ").unwrap();
