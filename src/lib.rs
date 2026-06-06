@@ -1038,6 +1038,107 @@ fn log_player_response_summary(label: &str, text: &str) {
     }
 }
 
+fn debug_json_parse_failure(label: &str, text: &str, error: &serde_json::Error) {
+    let line = error.line();
+    let column = error.column();
+    let byte_offset = if line == 0 || column == 0 {
+        None
+    } else {
+        let mut current_line = 1usize;
+        let mut current_col = 1usize;
+        let mut offset = None;
+
+        for (idx, ch) in text.char_indices() {
+            if current_line == line && current_col == column {
+                offset = Some(idx);
+                break;
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 1;
+            } else {
+                current_col += 1;
+            }
+        }
+
+        offset.or_else(|| {
+            if current_line == line && current_col == column {
+                Some(text.len())
+            } else {
+                None
+            }
+        })
+    };
+
+    let context = byte_offset.map(|offset| {
+        let start = offset.saturating_sub(200);
+        let end = std::cmp::min(text.len(), offset + 200);
+        text[start..end].to_string()
+    });
+
+    eprintln!("{} JSON parse failed: {}", label, error);
+    if let Some(offset) = byte_offset {
+        eprintln!("{} JSON parse location: byte_offset={}", label, offset);
+    }
+    if let Some(context) = context {
+        eprintln!("{} JSON parse context: {}", label, context);
+    }
+    eprintln!("{} raw JSON: {}", label, text);
+}
+
+fn extract_json_object(text: &str, start_index: usize) -> Option<&str> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut depth = 0usize;
+    let mut object_start = None;
+
+    for (relative_idx, ch) in text[start_index..].char_indices() {
+        let idx = start_index + relative_idx;
+
+        if object_start.is_none() {
+            if ch.is_whitespace() {
+                continue;
+            }
+            if ch != '{' {
+                return None;
+            }
+            object_start = Some(idx);
+            depth = 1;
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    let start = object_start?;
+                    let end = idx + ch.len_utf8();
+                    return Some(&text[start..end]);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 pub fn extract_video_id(url: &str) -> Option<String> {
     let re = Regex::new(
         r"(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/|youtube\.com/live/)([0-9A-Za-z_-]{11})",
@@ -2062,12 +2163,15 @@ async fn search_youtube(
         .find(|c: char| !c.is_whitespace())
         .map(|i| data_start + i)
         .unwrap_or(data_start);
-    let data_end = html[data_start..]
-        .find(';')
-        .map(|i| data_start + i)
-        .ok_or("parse error: no ; to close ytInitialData")?;
-
-    let data: serde_json::Value = serde_json::from_str(&html[data_start..data_end])?;
+    let raw_json = extract_json_object(&html, data_start)
+        .ok_or("parse error: could not find end of ytInitialData object")?;
+    let data: serde_json::Value = match serde_json::from_str(raw_json) {
+        Ok(data) => data,
+        Err(error) => {
+            debug_json_parse_failure("youtube search ytInitialData", raw_json, &error);
+            return Err(error.into());
+        }
+    };
     let mut results = Vec::new();
 
     if let Some(sections) = data
