@@ -38,11 +38,11 @@ enum Command {
         #[arg(long)]
         cookies_from_browser: Option<String>,
 
-        /// Convert to format via ffmpeg (e.g. ogg, m4a, mp3)
+        /// Convert to format via the embedding application's audio pipeline
         #[arg(short, long)]
         format: Option<String>,
 
-        /// Embed cover art in output file (requires ffmpeg)
+        /// Embed cover art in output file through the embedding application's audio pipeline
         #[arg(long)]
         embed_cover: bool,
     },

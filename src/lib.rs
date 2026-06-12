@@ -312,68 +312,25 @@ impl YoutubeClient {
     }
 }
 
-/// Convert audio format and optionally embed cover art using ffmpeg.
+/// Convert audio format and optionally embed cover art.
 ///
 /// - `input`: path to the source audio file
 /// - `output`: desired output path (can be same as input — uses a temp file)
 /// - `cover`: optional path to a cover art image (jpg/png)
 ///
-/// If the output container doesn't support the input codec (e.g. Opus in M4A),
-/// ffmpeg will re-encode automatically.
-///
-/// Requires `ffmpeg` to be on PATH.
+/// Kaulan finalizes downloaded audio through its backend FFmpeg library
+/// pipeline. This vendored helper intentionally rejects direct conversion
+/// instead of spawning an external ffmpeg process.
 pub fn convert_audio(
     input: &Path,
     output: &Path,
     cover: Option<&Path>,
     fw: &dyn FileWriter,
 ) -> Result<(), Error> {
-    // If input == output, ffmpeg can't edit in-place, use a temp file
-    let need_temp = input == output;
-    let actual_output = if need_temp {
-        let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-        let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("m4a");
-        input.with_file_name(format!("{}.tmp.{}", stem, ext))
-    } else {
-        output.to_path_buf()
-    };
-
-    let mut cmd = std::process::Command::new("ffmpeg");
-    cmd.arg("-y").arg("-i").arg(input);
-
-    if let Some(cover_path) = cover {
-        cmd.arg("-i").arg(cover_path);
-        cmd.args([
-            "-map",
-            "0:a",
-            "-map",
-            "1:v",
-            "-c:a",
-            "copy",
-            "-c:v",
-            "copy",
-            "-disposition:v:0",
-            "attached_pic",
-        ]);
-    } else {
-        cmd.args(["-c:a", "copy"]);
-    }
-
-    cmd.arg(&actual_output);
-
-    let status = cmd.status()?;
-    if !status.success() {
-        if need_temp {
-            let _ = fw.remove_file(&actual_output);
-        }
-        return Err(Error::Other(format!("ffmpeg exited with {}", status)));
-    }
-
-    if need_temp {
-        fw.rename(&actual_output, output)?;
-    }
-
-    Ok(())
+    let _ = (input, output, cover, fw);
+    Err(Error::Other(
+        "audio conversion is handled by Kaulan's FFmpeg library pipeline".into(),
+    ))
 }
 
 // ── Internal types ──
