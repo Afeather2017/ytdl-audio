@@ -1019,7 +1019,7 @@ fn debug_json_parse_failure(label: &str, text: &str, error: &serde_json::Error) 
             }
         }
 
-        offset.or_else(|| {
+        offset.or({
             if current_line == line && current_col == column {
                 Some(text.len())
             } else {
@@ -1329,15 +1329,12 @@ fn parse_sig_solver_output(
             let Some(data) = response.get("data").and_then(|v| v.as_object()) else {
                 continue;
             };
-            if let Some(sig_input) = sig {
-                if let Some(v) = data.get(sig_input).and_then(|v| v.as_str()) {
-                    solved_sig = Some(v.to_string());
-                }
+            if let Some(v) = sig.and_then(|sig_input| data.get(sig_input).and_then(|v| v.as_str()))
+            {
+                solved_sig = Some(v.to_string());
             }
-            if let Some(n_input) = n {
-                if let Some(v) = data.get(n_input).and_then(|v| v.as_str()) {
-                    solved_n = Some(v.to_string());
-                }
+            if let Some(v) = n.and_then(|n_input| data.get(n_input).and_then(|v| v.as_str())) {
+                solved_n = Some(v.to_string());
             }
         }
     }
@@ -1437,20 +1434,18 @@ fn resolve_format_url(
         url.push_str(sep);
         url.push_str(&format!("{}={}", sig_param, urlencoding::encode(&sig)));
     }
-    if let Some(solved_n) = solved_n {
-        if let Some((base, query)) = url.split_once('?') {
-            let mut q: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
-                .into_owned()
-                .collect();
-            q.insert("n".into(), solved_n);
-            url = format!(
-                "{}?{}",
-                base,
-                url::form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs(q.iter())
-                    .finish()
-            );
-        }
+    if let Some((solved_n, (base, query))) = solved_n.zip(url.split_once('?')) {
+        let mut q: HashMap<String, String> = url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+        q.insert("n".into(), solved_n);
+        url = format!(
+            "{}?{}",
+            base,
+            url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(q.iter())
+                .finish()
+        );
     }
     eprintln!("resolve flow: returning solved url");
     Ok(Some(url))
@@ -1496,6 +1491,7 @@ async fn fetch_hls_audio_stream(
     let mut last_stream_inf: Option<String> = None;
     let mut best_audio_url: Option<String> = None;
     let mut best_bandwidth = 0u64;
+    let bandwidth_re = Regex::new(r#"BANDWIDTH=(\d+)"#)?;
 
     for line in text.lines() {
         let line = line.trim();
@@ -1512,9 +1508,8 @@ async fn fetch_hls_audio_stream(
         if !info.contains("AUDIO=") {
             continue;
         }
-        let bandwidth = Regex::new(r#"BANDWIDTH=(\d+)"#)
-            .ok()
-            .and_then(|re| re.captures(&info))
+        let bandwidth = bandwidth_re
+            .captures(&info)
             .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse::<u64>().ok())
             .unwrap_or(0);
@@ -2033,10 +2028,9 @@ async fn fetch_subtitle(client: &reqwest::Client, url: &str) -> Result<String, E
     let text = resp.text().await?;
 
     let mut srt = String::new();
-    let mut idx = 1u32;
     let re = Regex::new(r#"<p\s+t="(\d+)"(?:\s+d="(\d+)")?[^>]*>([^<]*)</p>"#)?;
 
-    for cap in re.captures_iter(&text) {
+    for (idx, cap) in (1u32..).zip(re.captures_iter(&text)) {
         let start_ms: u64 = cap[1].parse().unwrap_or(0);
         let dur_ms: u64 = cap
             .get(2)
@@ -2064,7 +2058,6 @@ async fn fetch_subtitle(client: &reqwest::Client, url: &str) -> Result<String, E
             end_ms % 1000,
             content.trim()
         ));
-        idx += 1;
     }
     Ok(srt)
 }
