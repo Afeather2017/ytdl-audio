@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::StatusCode;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -57,6 +57,7 @@ pub struct Video {
     pub publish_time: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct DownloadOpts {
     pub itag: String,
     pub output_dir: String,
@@ -77,10 +78,144 @@ impl Default for DownloadOpts {
     }
 }
 
+impl Clone for DownloadOpts {
+    fn clone(&self) -> Self {
+        Self {
+            itag: self.itag.clone(),
+            output_dir: self.output_dir.clone(),
+            lang: self.lang.clone(),
+            cookies: self.cookies.clone(),
+            cookies_from_browser: self.cookies_from_browser.clone(),
+        }
+    }
+}
+
 pub struct DownloadResult {
     pub audio_path: PathBuf,
     pub subtitle_paths: Vec<PathBuf>,
     pub thumbnail_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadProgressPhase {
+    Queued,
+    Preparing,
+    ResolvingMeta,
+    Downloading,
+    PostProcessing,
+    EmbeddingCover,
+    SavingLyrics,
+    RefreshingLibrary,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadProgressEvent {
+    pub job_id: String,
+    pub source: String,
+    pub phase: DownloadProgressPhase,
+    pub percent: Option<u8>,
+    pub message: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadProgressSnapshot {
+    pub job_id: String,
+    pub source: String,
+    pub state: String,
+    pub phase: DownloadProgressPhase,
+    pub percent: Option<u8>,
+    pub message: String,
+    pub detail: Option<String>,
+    pub filename: Option<String>,
+    pub warning: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadArtifact {
+    pub path: PathBuf,
+    pub filename: Option<String>,
+    pub bytes_written: u64,
+}
+
+pub trait DownloadProgressReporter: Send + Sync {
+    fn emit(&self, event: DownloadProgressEvent);
+}
+
+pub trait DownloadSource<Request> {
+    type Error;
+
+    fn download_with_progress(
+        &self,
+        request: &Request,
+        target_path: &Path,
+        reporter: Arc<dyn DownloadProgressReporter>,
+    ) -> Result<DownloadArtifact, Self::Error>;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopProgressReporter;
+
+impl DownloadProgressReporter for NoopProgressReporter {
+    fn emit(&self, _event: DownloadProgressEvent) {}
+}
+
+pub fn snapshot_state(phase: &DownloadProgressPhase) -> &'static str {
+    match phase {
+        DownloadProgressPhase::Queued => "queued",
+        DownloadProgressPhase::Completed => "completed",
+        DownloadProgressPhase::Failed => "failed",
+        DownloadProgressPhase::Preparing
+        | DownloadProgressPhase::ResolvingMeta
+        | DownloadProgressPhase::Downloading
+        | DownloadProgressPhase::PostProcessing
+        | DownloadProgressPhase::EmbeddingCover
+        | DownloadProgressPhase::SavingLyrics
+        | DownloadProgressPhase::RefreshingLibrary => "running",
+    }
+}
+
+pub fn apply_progress_event(
+    snapshot: Option<DownloadProgressSnapshot>,
+    event: DownloadProgressEvent,
+) -> DownloadProgressSnapshot {
+    let mut snapshot = snapshot.unwrap_or_else(|| DownloadProgressSnapshot {
+        job_id: event.job_id.clone(),
+        source: event.source.clone(),
+        state: snapshot_state(&event.phase).to_string(),
+        phase: event.phase.clone(),
+        percent: event.percent,
+        message: event.message.clone(),
+        detail: event.detail.clone(),
+        filename: None,
+        warning: None,
+        error: None,
+    });
+
+    snapshot.job_id = event.job_id;
+    snapshot.source = event.source;
+    snapshot.state = snapshot_state(&event.phase).to_string();
+    snapshot.phase = event.phase.clone();
+    snapshot.percent = event.percent;
+    snapshot.message = event.message;
+    snapshot.detail = event.detail;
+
+    if snapshot.phase == DownloadProgressPhase::Failed && snapshot.error.is_none() {
+        snapshot.error = Some(snapshot.message.clone());
+    }
+
+    snapshot
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadRequest {
+    pub job_id: String,
+    pub url: String,
+    pub opts: DownloadOpts,
 }
 
 pub trait JsRunner: Send + Sync {
@@ -191,8 +326,28 @@ impl Default for NodeJsRunner {
     }
 }
 
+fn ensure_solver_node_modules(solver_path: &Path) -> Result<(), Error> {
+    let js_dir = solver_path
+        .parent()
+        .ok_or_else(|| Error::NodeJs("solver path has no parent directory".into()))?;
+    let missing = ["meriyah", "astring"]
+        .into_iter()
+        .filter(|pkg| !js_dir.join("node_modules").join(pkg).exists())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(Error::NodeJs(format!(
+        "missing solver dependencies: {}. Run `cd {} && npm ci`",
+        missing.join(", "),
+        js_dir.display()
+    )))
+}
+
 impl JsRunner for NodeJsRunner {
     fn run(&self, input: &str) -> Result<String, Error> {
+        ensure_solver_node_modules(&self.solver_path)?;
         eprintln!("solver flow: solver_path={}", self.solver_path.display());
         let mut cmd = std::process::Command::new("node");
         cmd.arg(&self.solver_path);
@@ -230,6 +385,7 @@ impl JsRunner for NodeJsRunner {
     }
 }
 
+#[derive(Clone)]
 pub struct YoutubeClient {
     client: reqwest::Client,
     #[allow(dead_code)]
@@ -285,7 +441,27 @@ impl YoutubeClient {
         url: &str,
         opts: DownloadOpts,
     ) -> impl std::future::Future<Output = Result<DownloadResult, Error>> + Send {
-        run_download(self, url, opts)
+        let request = DownloadRequest {
+            job_id: "download".to_string(),
+            url: url.to_string(),
+            opts,
+        };
+        let client = self.clone();
+        async move {
+            client
+                .download_with_progress(&request, Arc::new(NoopProgressReporter))
+                .await
+        }
+    }
+
+    pub fn download_with_progress(
+        &self,
+        request: &DownloadRequest,
+        reporter: Arc<dyn DownloadProgressReporter>,
+    ) -> impl std::future::Future<Output = Result<DownloadResult, Error>> + Send {
+        let request = request.clone();
+        let client = self.clone();
+        async move { run_download(&client, &request, reporter).await }
     }
 
     /// Download video thumbnail. Tries maxresdefault first, falls back to hqdefault.
@@ -1538,6 +1714,8 @@ async fn download_stream_file(
     player_js: Option<&str>,
     js_runner: &dyn JsRunner,
     fw: &dyn FileWriter,
+    reporter: Arc<dyn DownloadProgressReporter>,
+    job_id: &str,
 ) -> Result<(), Error> {
     eprintln!(
         "download flow: enter download_stream_file path={}",
@@ -1556,6 +1734,14 @@ async fn download_stream_file(
     eprintln!("download target: audio={}", output_path.display());
     eprintln!("opening stream file: {}", output_path.display());
     let mut file = fw.open_append(output_path)?;
+    let total_segments = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim();
+            !line.is_empty() && !line.starts_with('#')
+        })
+        .count();
+    let mut downloaded_segments = 0usize;
 
     for line in text.lines() {
         let line = line.trim();
@@ -1573,6 +1759,18 @@ async fn download_stream_file(
         let segment_url = solve_n_in_url_with_runner(&segment_url, player_js, js_runner)?;
         let bytes = client.get(&segment_url).send().await?.bytes().await?;
         file.write_all(&bytes)?;
+        downloaded_segments += 1;
+        reporter.emit(DownloadProgressEvent {
+            job_id: job_id.to_string(),
+            source: "youtube".to_string(),
+            phase: DownloadProgressPhase::Downloading,
+            percent: Some(((downloaded_segments * 100) / total_segments.max(1)) as u8),
+            message: "Downloading HLS audio stream".to_string(),
+            detail: Some(format!(
+                "segment {} of {}",
+                downloaded_segments, total_segments
+            )),
+        });
     }
 
     Ok(())
@@ -1927,6 +2125,8 @@ async fn download_file(
     path: &Path,
     total_size: u64,
     fw: &dyn FileWriter,
+    reporter: Arc<dyn DownloadProgressReporter>,
+    job_id: &str,
 ) -> Result<(), Error> {
     eprintln!("download flow: enter download_file path={}", path.display());
     fw.ensure_dir(path)?;
@@ -1989,6 +2189,19 @@ async fn download_file(
                                 file.write_all(&data)?;
                                 chunk_received += data.len() as u64;
                                 downloaded += data.len() as u64;
+                                reporter.emit(DownloadProgressEvent {
+                                    job_id: job_id.to_string(),
+                                    source: "youtube".to_string(),
+                                    phase: DownloadProgressPhase::Downloading,
+                                    percent: Some(
+                                        ((downloaded.saturating_mul(100)) / total_size.max(1)) as u8,
+                                    ),
+                                    message: "Downloading audio stream".to_string(),
+                                    detail: Some(format!(
+                                        "{} / {} bytes",
+                                        downloaded, total_size
+                                    )),
+                                });
                             }
                             Err(_) => {
                                 failed = true;
@@ -2196,9 +2409,21 @@ async fn search_youtube(
 
 async fn run_download(
     yc: &YoutubeClient,
-    url: &str,
-    opts: DownloadOpts,
+    request: &DownloadRequest,
+    reporter: Arc<dyn DownloadProgressReporter>,
 ) -> Result<DownloadResult, Error> {
+    reporter.emit(DownloadProgressEvent {
+        job_id: request.job_id.clone(),
+        source: "youtube".to_string(),
+        phase: DownloadProgressPhase::Preparing,
+        percent: None,
+        message: "Preparing YouTube download".to_string(),
+        detail: Some(request.url.clone()),
+    });
+
+    let result = async {
+    let url = request.url.as_str();
+    let opts = &request.opts;
     let cdp_cookies = if let Some(port_str) = opts.cookies_from_browser.as_deref() {
         let port: u16 = port_str.parse().map_err(|_| {
             Error::Other(format!(
@@ -2212,28 +2437,24 @@ async fn run_download(
     };
 
     let video_id = extract_video_id(url).ok_or("Could not extract video ID from URL")?;
+    reporter.emit(DownloadProgressEvent {
+        job_id: request.job_id.clone(),
+        source: "youtube".to_string(),
+        phase: DownloadProgressPhase::ResolvingMeta,
+        percent: None,
+        message: "Resolving video metadata".to_string(),
+        detail: Some(video_id.clone()),
+    });
 
-    let (visitor_data, page_html) = fetch_video_page(&yc.client, &video_id).await?;
-    let pr = fetch_player_response(&yc.client, &video_id, &visitor_data).await?;
-
-    let (pr, client, page_html) = if pr.playability_status.status != "OK" {
-        let reason = pr.playability_status.reason.as_deref().unwrap_or("unknown");
-        eprintln!(
-            "ANDROID_VR failed: {} — trying tv_downgraded client with cookies...",
-            reason
-        );
-
-        let (cookie_store, mut auth) = if let Some(ref cookies) = cdp_cookies {
+    let authenticated = if cdp_cookies.is_some() || opts.cookies.is_some() {
+        let (cookie_store, auth) = if let Some(ref cookies) = cdp_cookies {
             build_cookie_store_and_auth(cookies)?
         } else if let Some(ref path) = opts.cookies {
             let auth = load_netscape_cookies(path)?;
             let store = load_cookie_store_from_netscape(path)?;
             (store, auth)
         } else {
-            return Err(Error::Other(format!(
-                "Video not playable ({}). Provide cookies with --cookies or --cookies-from-browser to use fallback clients.",
-                reason
-            )));
+            unreachable!();
         };
 
         debug_cookie_header(
@@ -2251,19 +2472,39 @@ async fn run_download(
             "player_api",
         );
 
-        let cookie_client = {
-            let mut builder = reqwest::Client::builder()
-                .user_agent(BROWSER_USER_AGENT)
-                .timeout(std::time::Duration::from_secs(60))
-                .connect_timeout(std::time::Duration::from_secs(30))
-                .cookie_provider(Arc::new(CookieStoreMutex::new(cookie_store)))
-                .http1_only();
-            if let Some(ref p) = yc.proxy {
-                builder = builder.proxy(reqwest::Proxy::all(p)?);
-            }
-            builder.build()?
-        };
-        let (_, web_page_html) = fetch_video_page(&cookie_client, &video_id).await?;
+        let mut builder = reqwest::Client::builder()
+            .user_agent(BROWSER_USER_AGENT)
+            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .cookie_provider(Arc::new(CookieStoreMutex::new(cookie_store)))
+            .http1_only();
+        if let Some(ref p) = yc.proxy {
+            builder = builder.proxy(reqwest::Proxy::all(p)?);
+        }
+        Some((builder.build()?, auth))
+    } else {
+        None
+    };
+
+    let initial_client = authenticated
+        .as_ref()
+        .map(|(client, _)| client)
+        .unwrap_or(&yc.client);
+    let (visitor_data, page_html) = fetch_video_page(initial_client, &video_id).await?;
+    let pr = fetch_player_response(initial_client, &video_id, &visitor_data).await?;
+
+    let (pr, client, page_html) = if let Some((cookie_client, mut auth)) = authenticated {
+        if pr.playability_status.status != "OK" {
+            let reason = pr.playability_status.reason.as_deref().unwrap_or("unknown");
+            eprintln!(
+                "ANDROID_VR failed: {} — trying tv_downgraded client with cookies...",
+                reason
+            );
+        } else {
+            eprintln!("cookies provided: preferring authenticated tv/web clients...");
+        }
+
+        let web_page_html = page_html.clone();
         let page_ctx = parse_ytcfg_context(&web_page_html);
         eprintln!(
             "page_ctx: visitor={:?} session_index={:?} delegated={:?} user={:?} logged_in={:?} client_version={:?} data_sync_id={:?} sts={:?}",
@@ -2378,8 +2619,14 @@ async fn run_download(
                 }
             }
         }
-    } else {
+    } else if pr.playability_status.status == "OK" {
         (pr, yc.client.clone(), page_html)
+    } else {
+        let reason = pr.playability_status.reason.as_deref().unwrap_or("unknown");
+        return Err(Error::Other(format!(
+            "Video not playable ({}). Provide cookies with --cookies or --cookies-from-browser to use fallback clients.",
+            reason
+        )));
     };
 
     let title = pr
@@ -2428,6 +2675,14 @@ async fn run_download(
         {
             let audio_path = PathBuf::from(&opts.output_dir).join(format!("{}.m4a", safe_title));
             eprintln!("download target 1: audio={}", audio_path.display());
+            reporter.emit(DownloadProgressEvent {
+                job_id: request.job_id.clone(),
+                source: "youtube".to_string(),
+                phase: DownloadProgressPhase::Downloading,
+                percent: Some(0),
+                message: "Starting HLS audio download".to_string(),
+                detail: Some(audio_path.display().to_string()),
+            });
             download_stream_file(
                 &client,
                 &media_playlist_url,
@@ -2435,6 +2690,8 @@ async fn run_download(
                 player_js.as_deref(),
                 yc.js_runner.as_ref(),
                 fw,
+                reporter.clone(),
+                &request.job_id,
             )
             .await?;
             audio_path
@@ -2447,7 +2704,24 @@ async fn run_download(
             let audio_url = resolve_format_url(fmt, player_js.as_deref(), yc.js_runner.as_ref())?
                 .ok_or("Format has no direct URL")?;
             let content_length = fmt.content_length.ok_or("Unknown content length")?;
-            download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
+            reporter.emit(DownloadProgressEvent {
+                job_id: request.job_id.clone(),
+                source: "youtube".to_string(),
+                phase: DownloadProgressPhase::Downloading,
+                percent: Some(0),
+                message: "Starting audio download".to_string(),
+                detail: Some(audio_path.display().to_string()),
+            });
+            download_file(
+                &client,
+                &audio_url,
+                &audio_path,
+                content_length,
+                fw,
+                reporter.clone(),
+                &request.job_id,
+            )
+            .await?;
             audio_path
         }
     } else {
@@ -2459,11 +2733,36 @@ async fn run_download(
             .ok_or("Format has no direct URL")?;
         eprintln!("download target 3 done");
         let content_length = fmt.content_length.ok_or("Unknown content length")?;
-        download_file(&client, &audio_url, &audio_path, content_length, fw).await?;
+        reporter.emit(DownloadProgressEvent {
+            job_id: request.job_id.clone(),
+            source: "youtube".to_string(),
+            phase: DownloadProgressPhase::Downloading,
+            percent: Some(0),
+            message: "Starting audio download".to_string(),
+            detail: Some(audio_path.display().to_string()),
+        });
+        download_file(
+            &client,
+            &audio_url,
+            &audio_path,
+            content_length,
+            fw,
+            reporter.clone(),
+            &request.job_id,
+        )
+        .await?;
         audio_path
     };
 
-    // Thumbnail
+    reporter.emit(DownloadProgressEvent {
+        job_id: request.job_id.clone(),
+        source: "youtube".to_string(),
+        phase: DownloadProgressPhase::PostProcessing,
+        percent: None,
+        message: "Fetching thumbnail and subtitles".to_string(),
+        detail: None,
+    });
+
     let thumb_path = PathBuf::from(&opts.output_dir).join(format!("{}.jpg", safe_title));
     eprintln!("download target: thumbnail={}", thumb_path.display());
     let thumbnail_path = match yc.download_thumbnail(&video_id, &thumb_path).await {
@@ -2479,6 +2778,36 @@ async fn run_download(
         subtitle_paths,
         thumbnail_path,
     })
+    }
+    .await;
+
+    match result {
+        Ok(download) => {
+            reporter.emit(DownloadProgressEvent {
+                job_id: request.job_id.clone(),
+                source: "youtube".to_string(),
+                phase: DownloadProgressPhase::Completed,
+                percent: Some(100),
+                message: "Download complete".to_string(),
+                detail: download
+                    .audio_path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned()),
+            });
+            Ok(download)
+        }
+        Err(error) => {
+            reporter.emit(DownloadProgressEvent {
+                job_id: request.job_id.clone(),
+                source: "youtube".to_string(),
+                phase: DownloadProgressPhase::Failed,
+                percent: None,
+                message: "Download failed".to_string(),
+                detail: Some(error.to_string()),
+            });
+            Err(error)
+        }
+    }
 }
 
 async fn fetch_subtitles(
@@ -2536,6 +2865,63 @@ async fn fetch_subtitles(
     Ok(paths)
 }
 
+pub struct YoutubeDownloadSource<'a> {
+    client: &'a YoutubeClient,
+}
+
+impl<'a> YoutubeDownloadSource<'a> {
+    pub fn new(client: &'a YoutubeClient) -> Self {
+        Self { client }
+    }
+}
+
+impl DownloadSource<DownloadRequest> for YoutubeDownloadSource<'_> {
+    type Error = Error;
+
+    fn download_with_progress(
+        &self,
+        request: &DownloadRequest,
+        target_path: &Path,
+        reporter: Arc<dyn DownloadProgressReporter>,
+    ) -> Result<DownloadArtifact, Self::Error> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(Error::Other(
+                "YoutubeDownloadSource::download_with_progress cannot run inside an active Tokio runtime"
+                    .into(),
+            ));
+        }
+
+        let mut request = request.clone();
+        if let Some(parent) = target_path.parent() {
+            request.opts.output_dir = parent.display().to_string();
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::Other(format!("failed to create tokio runtime: {}", e)))?;
+        let result = runtime.block_on(self.client.download_with_progress(&request, reporter))?;
+        let source_path = result.audio_path;
+        let final_path = if source_path == target_path {
+            source_path
+        } else {
+            self.client.file_writer.ensure_dir(target_path)?;
+            self.client.file_writer.rename(&source_path, target_path)?;
+            target_path.to_path_buf()
+        };
+        let bytes_written = self.client.file_writer.file_size(&final_path)?.unwrap_or(0);
+        let filename = final_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+
+        Ok(DownloadArtifact {
+            path: final_path,
+            filename,
+            bytes_written,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2585,5 +2971,32 @@ mod tests {
             .collect::<Vec<_>>()
             .join("; ");
         assert!(google_cookies.contains("LOGIN_INFO="));
+    }
+
+    #[test]
+    fn snapshot_state_maps_terminal_states() {
+        assert_eq!(snapshot_state(&DownloadProgressPhase::Queued), "queued");
+        assert_eq!(snapshot_state(&DownloadProgressPhase::Completed), "completed");
+        assert_eq!(snapshot_state(&DownloadProgressPhase::Failed), "failed");
+        assert_eq!(snapshot_state(&DownloadProgressPhase::Downloading), "running");
+    }
+
+    #[test]
+    fn apply_progress_event_populates_snapshot() {
+        let snapshot = apply_progress_event(
+            None,
+            DownloadProgressEvent {
+                job_id: "job-1".into(),
+                source: "youtube".into(),
+                phase: DownloadProgressPhase::Downloading,
+                percent: Some(42),
+                message: "Downloading audio stream".into(),
+                detail: Some("123 / 456 bytes".into()),
+            },
+        );
+
+        assert_eq!(snapshot.state, "running");
+        assert_eq!(snapshot.percent, Some(42));
+        assert_eq!(snapshot.detail.as_deref(), Some("123 / 456 bytes"));
     }
 }

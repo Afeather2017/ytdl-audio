@@ -1,12 +1,60 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+type DownloadProgressPhase =
+  | "queued"
+  | "preparing"
+  | "resolving_meta"
+  | "downloading"
+  | "post_processing"
+  | "embedding_cover"
+  | "saving_lyrics"
+  | "refreshing_library"
+  | "completed"
+  | "failed";
+
+type DownloadProgressSnapshot = {
+  job_id: string;
+  source: string;
+  state: string;
+  phase: DownloadProgressPhase;
+  percent: number | null;
+  message: string;
+  detail: string | null;
+  filename: string | null;
+  warning: string | null;
+  error: string | null;
+};
 
 const videoUrl = ref("https://www.youtube.com/watch?v=fywVL3hh1xo");
 const proxy = ref("");
 const cookieJar = ref("");
 const outputDir = ref("");
 const status = ref("Open the YouTube window and log in.");
+const progress = ref<DownloadProgressSnapshot | null>(null);
+let unlistenProgress: UnlistenFn | null = null;
+
+onMounted(async () => {
+  unlistenProgress = await listen<DownloadProgressSnapshot>(
+    "download-progress",
+    (event) => {
+      progress.value = event.payload;
+      const percent =
+        event.payload.percent == null ? "" : ` ${event.payload.percent}%`;
+      const detail = event.payload.detail ? ` (${event.payload.detail})` : "";
+      status.value = `[${event.payload.phase}]${percent} ${event.payload.message}${detail}`;
+    },
+  );
+});
+
+onBeforeUnmount(() => {
+  if (unlistenProgress) {
+    unlistenProgress();
+    unlistenProgress = null;
+  }
+});
 
 async function openBrowser() {
   status.value = "Navigating current webview to YouTube...";
@@ -56,6 +104,7 @@ async function closeBrowser() {
 
 async function testDownload() {
   status.value = "Starting yt-dlp-rs download...";
+  progress.value = null;
   try {
     const result = await invoke<{
       audio_path: string;
@@ -108,6 +157,13 @@ async function testDownload() {
 
     <section class="panel status">
       <div><strong>Status:</strong> {{ status }}</div>
+      <div v-if="progress">
+        <strong>Progress:</strong>
+        {{ progress.phase }}
+        <template v-if="progress.percent !== null"> · {{ progress.percent }}%</template>
+      </div>
+      <div v-if="progress?.detail"><strong>Detail:</strong> {{ progress.detail }}</div>
+      <div v-if="progress?.error"><strong>Error:</strong> {{ progress.error }}</div>
       <div v-if="outputDir"><strong>App dir:</strong> {{ outputDir }}</div>
       <div v-if="cookieJar"><strong>Cookie jar:</strong> {{ cookieJar }}</div>
     </section>

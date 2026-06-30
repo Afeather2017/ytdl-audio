@@ -5,13 +5,17 @@ A minimal YouTube audio + subtitle downloader and search tool in Rust, with a sm
 ## Build
 
 ```bash
+cd js && npm ci
+cd ..
 cargo build --release
 ```
 
 Binary size: ~7.3 MB.
 
 Dependencies: `reqwest`, `tokio`, `serde`, `serde_json`, `regex`, `clap`, `futures-util`, `urlencoding`, `sha1`, `reqwest_cookie_store`.
-Requires: `node` for the YouTube cipher solver.
+Requires: `node` plus the local `js/` dependencies for the YouTube cipher solver.
+
+If you skip `cd js && npm ci`, downloads that need cipher or `n` solving will fail when `js/solver.mjs` starts.
 
 ## Usage
 
@@ -168,6 +172,12 @@ node js/export_cookies_cdp.mjs --out /tmp/ytdl-audio-cookies.txt
 ### Node Solver
 
 `js/solver.mjs` wraps the vendored `yt-dlp` cipher solver and runs it under Node.js. This is what makes the Rust refactor work on YouTube responses that need cipher decryption.
+
+The solver depends on the packages declared in [js/package.json](/home/afeather/Codes/yt-dlp/ytdl-audio/js/package.json). Install them once before using the CLI:
+
+```bash
+cd js && npm ci
+```
 
 ## Limitations
 

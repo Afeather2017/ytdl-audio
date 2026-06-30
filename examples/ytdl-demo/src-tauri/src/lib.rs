@@ -2,16 +2,20 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 #[cfg(target_os = "android")]
-use std::sync::{Mutex, OnceLock};
-use tauri::Manager;
+use std::sync::OnceLock;
+use tauri::{Emitter, Manager};
 #[cfg(not(target_os = "android"))]
 use tauri::webview::PageLoadPayload;
 #[cfg(not(target_os = "android"))]
 use tauri::WebviewUrl;
 #[cfg(not(target_os = "android"))]
 use tauri::WebviewWindow;
-use ytdl_audio::{DownloadOpts, JsRunner, YoutubeClient};
+use ytdl_audio::{
+    DownloadOpts, DownloadProgressEvent, DownloadProgressPhase, DownloadProgressReporter,
+    DownloadProgressSnapshot, DownloadRequest, JsRunner, YoutubeClient, apply_progress_event,
+};
 
 #[cfg(target_os = "android")]
 use jni::objects::{JObject, JString, JValue};
@@ -35,6 +39,7 @@ const YOUTUBE_URL: &str = "https://www.youtube.com";
 const COOKIE_FILE_NAME: &str = "ytdl-demo-youtube-cookies.txt";
 const RUNTIME_LOG_FILE_NAME: &str = "ytdl-demo-runtime.log";
 const BUILD_TRACE_MARKER: &str = "trace-2026-05-11-pathflow-01";
+const DOWNLOAD_PROGRESS_EVENT: &str = "download-progress";
 
 #[derive(Serialize)]
 struct DownloadOutcome {
@@ -43,6 +48,43 @@ struct DownloadOutcome {
     thumbnail_path: Option<String>,
     cookie_jar: String,
     output_dir: String,
+}
+
+struct TauriProgressReporter {
+    app: tauri::AppHandle,
+    snapshot: Mutex<Option<DownloadProgressSnapshot>>,
+}
+
+impl TauriProgressReporter {
+    fn new(app: tauri::AppHandle) -> Self {
+        Self {
+            app,
+            snapshot: Mutex::new(None),
+        }
+    }
+}
+
+impl DownloadProgressReporter for TauriProgressReporter {
+    fn emit(&self, event: DownloadProgressEvent) {
+        let Ok(mut snapshot_guard) = self.snapshot.lock() else {
+            return;
+        };
+
+        let mut snapshot = apply_progress_event(snapshot_guard.take(), event.clone());
+        match event.phase {
+            DownloadProgressPhase::Completed => {
+                snapshot.filename = event.detail.clone();
+                snapshot.error = None;
+            }
+            DownloadProgressPhase::Failed => {
+                snapshot.error = event.detail.clone().or_else(|| Some(event.message.clone()));
+            }
+            _ => {}
+        }
+
+        let _ = self.app.emit(DOWNLOAD_PROGRESS_EVENT, snapshot.clone());
+        *snapshot_guard = Some(snapshot);
+    }
 }
 
 struct WebviewJsRunner {
@@ -542,6 +584,14 @@ fn runtime_log(app: &tauri::AppHandle, message: &str) {
     eprintln!("{message}");
 }
 
+fn next_job_id(prefix: &str) -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("{prefix}-{ts}")
+}
+
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_afeather_ytdl_1demo_MainActivity_nativeInitAndroidContext(
@@ -735,16 +785,19 @@ async fn test_download(
     #[cfg(target_os = "android")]
     client.set_js_runner(WebviewJsRunner {});
     runtime_log(&app, "download: js runner set to webview");
-    runtime_log(&app, "download: calling yt-dlp-rs download()");
+    runtime_log(&app, "download: calling yt-dlp-rs download_with_progress()");
+    let request = DownloadRequest {
+        job_id: next_job_id("youtube"),
+        url: url.clone(),
+        opts: DownloadOpts {
+            output_dir: output_dir_str.clone(),
+            cookies: Some(cookie_jar_str.clone()),
+            ..Default::default()
+        },
+    };
+    let reporter = std::sync::Arc::new(TauriProgressReporter::new(app.clone()));
     let result = client
-        .download(
-            &url,
-            DownloadOpts {
-                output_dir: output_dir_str.clone(),
-                cookies: Some(cookie_jar_str.clone()),
-                ..Default::default()
-            },
-        )
+        .download_with_progress(&request, reporter)
         .await
         .map_err(|e| {
             let msg = e.to_string();

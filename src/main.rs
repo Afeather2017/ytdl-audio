@@ -1,6 +1,12 @@
 use clap::Parser;
+use std::io::{self, Write};
 use std::path::PathBuf;
-use ytdl_audio::{DownloadOpts, StdFileWriter, YoutubeClient, convert_audio};
+use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
+use ytdl_audio::{
+    DownloadOpts, DownloadProgressEvent, DownloadProgressPhase, DownloadProgressReporter,
+    DownloadRequest, StdFileWriter, YoutubeClient, convert_audio,
+};
 
 #[derive(Parser)]
 #[command(name = "ytdl-audio", about = "Download YouTube audio + subtitles")]
@@ -55,6 +61,75 @@ enum Command {
     },
 }
 
+#[derive(Default)]
+struct CliProgressState {
+    last_phase: Option<DownloadProgressPhase>,
+    drew_inline: bool,
+}
+
+struct CliProgressReporter {
+    state: Mutex<CliProgressState>,
+}
+
+impl CliProgressReporter {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(CliProgressState::default()),
+        }
+    }
+}
+
+impl DownloadProgressReporter for CliProgressReporter {
+    fn emit(&self, event: DownloadProgressEvent) {
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
+
+        let mut stdout = io::stdout().lock();
+        let phase_changed = state.last_phase.as_ref() != Some(&event.phase);
+
+        if matches!(event.phase, DownloadProgressPhase::Downloading) {
+            if state.drew_inline && !phase_changed {
+                let _ = write!(stdout, "\r");
+            }
+            match event.percent {
+                Some(percent) => {
+                    let _ = write!(stdout, "[{}] {:>3}% {}", event.source, percent, event.message);
+                }
+                None => {
+                    let _ = write!(stdout, "[{}] {}", event.source, event.message);
+                }
+            }
+            if let Some(detail) = &event.detail {
+                let _ = write!(stdout, " ({detail})");
+            }
+            let _ = stdout.flush();
+            state.drew_inline = true;
+        } else {
+            if state.drew_inline {
+                let _ = writeln!(stdout);
+                state.drew_inline = false;
+            }
+            let _ = write!(stdout, "[{}] {:?}: {}", event.source, event.phase, event.message);
+            if let Some(detail) = &event.detail {
+                let _ = write!(stdout, " ({detail})");
+            }
+            let _ = writeln!(stdout);
+            let _ = stdout.flush();
+        }
+
+        state.last_phase = Some(event.phase);
+    }
+}
+
+fn next_job_id(prefix: &str) -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("{prefix}-{ts}")
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
@@ -77,17 +152,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             embed_cover,
         } => {
             eprintln!("Downloading {}...", url);
+            let request = DownloadRequest {
+                job_id: next_job_id("youtube"),
+                url: url.clone(),
+                opts: DownloadOpts {
+                    itag,
+                    output_dir: output_dir.clone(),
+                    lang,
+                    cookies,
+                    cookies_from_browser,
+                },
+            };
             let result = client
-                .download(
-                    &url,
-                    DownloadOpts {
-                        itag,
-                        output_dir: output_dir.clone(),
-                        lang,
-                        cookies,
-                        cookies_from_browser,
-                    },
-                )
+                .download_with_progress(&request, std::sync::Arc::new(CliProgressReporter::new()))
                 .await?;
 
             let final_audio = if format.is_some() || embed_cover {
