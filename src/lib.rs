@@ -1597,33 +1597,38 @@ async fn fetch_hls_audio_stream(
     Ok(best_audio_url)
 }
 
+struct StreamDownloadContext<'a> {
+    player_js: Option<&'a str>,
+    js_runner: &'a dyn JsRunner,
+    file_writer: &'a dyn FileWriter,
+    reporter: Arc<dyn DownloadProgressReporter>,
+    job_id: &'a str,
+}
+
 async fn download_stream_file(
     client: &reqwest::Client,
     playlist_url: &str,
     output_path: &Path,
-    player_js: Option<&str>,
-    js_runner: &dyn JsRunner,
-    fw: &dyn FileWriter,
-    reporter: Arc<dyn DownloadProgressReporter>,
-    job_id: &str,
+    context: StreamDownloadContext<'_>,
 ) -> Result<(), Error> {
     eprintln!(
         "download flow: enter download_stream_file path={}",
         output_path.display()
     );
-    let playlist_url = solve_n_in_url_with_runner(playlist_url, player_js, js_runner)?;
+    let playlist_url =
+        solve_n_in_url_with_runner(playlist_url, context.player_js, context.js_runner)?;
     eprintln!("Fetching media playlist...");
     let text = client.get(&playlist_url).send().await?.text().await?;
     let base_url = reqwest::Url::parse(&playlist_url)
         .map_err(|e| Error::Other(format!("invalid playlist URL: {}", e)))?;
-    fw.ensure_dir(output_path)?;
+    context.file_writer.ensure_dir(output_path)?;
     eprintln!(
         "download flow: stream parent ready path={}",
         output_path.display()
     );
     eprintln!("download target: audio={}", output_path.display());
     eprintln!("opening stream file: {}", output_path.display());
-    let mut file = fw.open_append(output_path)?;
+    let mut file = context.file_writer.open_append(output_path)?;
     let total_segments = text
         .lines()
         .filter(|line| {
@@ -1646,12 +1651,13 @@ async fn download_stream_file(
                 .map(|u| u.to_string())
                 .map_err(|e| Error::Other(format!("invalid segment URL {}: {}", line, e)))?
         };
-        let segment_url = solve_n_in_url_with_runner(&segment_url, player_js, js_runner)?;
+        let segment_url =
+            solve_n_in_url_with_runner(&segment_url, context.player_js, context.js_runner)?;
         let bytes = client.get(&segment_url).send().await?.bytes().await?;
         file.write_all(&bytes)?;
         downloaded_segments += 1;
-        reporter.emit(DownloadProgressEvent {
-            job_id: job_id.to_string(),
+        context.reporter.emit(DownloadProgressEvent {
+            job_id: context.job_id.to_string(),
             source: "youtube".to_string(),
             phase: DownloadProgressPhase::Downloading,
             percent: Some(((downloaded_segments * 100) / total_segments.max(1)) as u8),
@@ -2575,11 +2581,13 @@ async fn run_download(
                 &client,
                 &media_playlist_url,
                 &audio_path,
-                player_js.as_deref(),
-                yc.js_runner.as_ref(),
-                fw,
-                reporter.clone(),
-                &request.job_id,
+                StreamDownloadContext {
+                    player_js: player_js.as_deref(),
+                    js_runner: yc.js_runner.as_ref(),
+                    file_writer: fw,
+                    reporter: reporter.clone(),
+                    job_id: &request.job_id,
+                },
             )
             .await?;
             audio_path
