@@ -14,6 +14,7 @@ name = "ytdl-audio"
 path = "src/main.rs"
 
 [dependencies]
+download-core = { path = "../ncmdump-rs/download-core" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

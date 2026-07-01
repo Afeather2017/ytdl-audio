@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use regex::Regex;
 use reqwest::StatusCode;
 use reqwest_cookie_store::{CookieStore, CookieStoreMutex};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -95,121 +95,11 @@ pub struct DownloadResult {
     pub subtitle_paths: Vec<PathBuf>,
     pub thumbnail_path: Option<PathBuf>,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DownloadProgressPhase {
-    Queued,
-    Preparing,
-    ResolvingMeta,
-    Downloading,
-    PostProcessing,
-    EmbeddingCover,
-    SavingLyrics,
-    RefreshingLibrary,
-    Completed,
-    Failed,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DownloadProgressEvent {
-    pub job_id: String,
-    pub source: String,
-    pub phase: DownloadProgressPhase,
-    pub percent: Option<u8>,
-    pub message: String,
-    pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DownloadProgressSnapshot {
-    pub job_id: String,
-    pub source: String,
-    pub state: String,
-    pub phase: DownloadProgressPhase,
-    pub percent: Option<u8>,
-    pub message: String,
-    pub detail: Option<String>,
-    pub filename: Option<String>,
-    pub warning: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DownloadArtifact {
-    pub path: PathBuf,
-    pub filename: Option<String>,
-    pub bytes_written: u64,
-}
-
-pub trait DownloadProgressReporter: Send + Sync {
-    fn emit(&self, event: DownloadProgressEvent);
-}
-
-pub trait DownloadSource<Request> {
-    type Error;
-
-    fn download_with_progress(
-        &self,
-        request: &Request,
-        target_path: &Path,
-        reporter: Arc<dyn DownloadProgressReporter>,
-    ) -> Result<DownloadArtifact, Self::Error>;
-}
-
-#[derive(Debug, Default)]
-pub struct NoopProgressReporter;
-
-impl DownloadProgressReporter for NoopProgressReporter {
-    fn emit(&self, _event: DownloadProgressEvent) {}
-}
-
-pub fn snapshot_state(phase: &DownloadProgressPhase) -> &'static str {
-    match phase {
-        DownloadProgressPhase::Queued => "queued",
-        DownloadProgressPhase::Completed => "completed",
-        DownloadProgressPhase::Failed => "failed",
-        DownloadProgressPhase::Preparing
-        | DownloadProgressPhase::ResolvingMeta
-        | DownloadProgressPhase::Downloading
-        | DownloadProgressPhase::PostProcessing
-        | DownloadProgressPhase::EmbeddingCover
-        | DownloadProgressPhase::SavingLyrics
-        | DownloadProgressPhase::RefreshingLibrary => "running",
-    }
-}
-
-pub fn apply_progress_event(
-    snapshot: Option<DownloadProgressSnapshot>,
-    event: DownloadProgressEvent,
-) -> DownloadProgressSnapshot {
-    let mut snapshot = snapshot.unwrap_or_else(|| DownloadProgressSnapshot {
-        job_id: event.job_id.clone(),
-        source: event.source.clone(),
-        state: snapshot_state(&event.phase).to_string(),
-        phase: event.phase.clone(),
-        percent: event.percent,
-        message: event.message.clone(),
-        detail: event.detail.clone(),
-        filename: None,
-        warning: None,
-        error: None,
-    });
-
-    snapshot.job_id = event.job_id;
-    snapshot.source = event.source;
-    snapshot.state = snapshot_state(&event.phase).to_string();
-    snapshot.phase = event.phase.clone();
-    snapshot.percent = event.percent;
-    snapshot.message = event.message;
-    snapshot.detail = event.detail;
-
-    if snapshot.phase == DownloadProgressPhase::Failed && snapshot.error.is_none() {
-        snapshot.error = Some(snapshot.message.clone());
-    }
-
-    snapshot
-}
+pub use download_core::{
+    DownloadArtifact, DownloadProgressEvent, DownloadProgressPhase, DownloadProgressReporter,
+    DownloadProgressSnapshot, DownloadSource, NoopProgressReporter, apply_progress_event,
+    snapshot_state,
+};
 
 #[derive(Debug, Clone)]
 pub struct DownloadRequest {
@@ -2884,23 +2774,19 @@ impl DownloadSource<DownloadRequest> for YoutubeDownloadSource<'_> {
         target_path: &Path,
         reporter: Arc<dyn DownloadProgressReporter>,
     ) -> Result<DownloadArtifact, Self::Error> {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            return Err(Error::Other(
-                "YoutubeDownloadSource::download_with_progress cannot run inside an active Tokio runtime"
-                    .into(),
-            ));
-        }
-
         let mut request = request.clone();
         if let Some(parent) = target_path.parent() {
             request.opts.output_dir = parent.display().to_string();
         }
-
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| Error::Other(format!("failed to create tokio runtime: {}", e)))?;
-        let result = runtime.block_on(self.client.download_with_progress(&request, reporter))?;
+        let result = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(self.client.download_with_progress(&request, reporter)))?
+        } else {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| Error::Other(format!("failed to create tokio runtime: {}", e)))?;
+            runtime.block_on(self.client.download_with_progress(&request, reporter))?
+        };
         let source_path = result.audio_path;
         let final_path = if source_path == target_path {
             source_path
