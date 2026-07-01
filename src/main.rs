@@ -94,7 +94,11 @@ impl DownloadProgressReporter for CliProgressReporter {
             }
             match event.percent {
                 Some(percent) => {
-                    let _ = write!(stdout, "[{}] {:>3}% {}", event.source, percent, event.message);
+                    let _ = write!(
+                        stdout,
+                        "[{}] {:>3}% {}",
+                        event.source, percent, event.message
+                    );
                 }
                 None => {
                     let _ = write!(stdout, "[{}] {}", event.source, event.message);
@@ -110,7 +114,11 @@ impl DownloadProgressReporter for CliProgressReporter {
                 let _ = writeln!(stdout);
                 state.drew_inline = false;
             }
-            let _ = write!(stdout, "[{}] {:?}: {}", event.source, event.phase, event.message);
+            let _ = write!(
+                stdout,
+                "[{}] {:?}: {}",
+                event.source, event.phase, event.message
+            );
             if let Some(detail) = &event.detail {
                 let _ = write!(stdout, " ({detail})");
             }

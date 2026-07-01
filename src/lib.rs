@@ -2084,13 +2084,11 @@ async fn download_file(
                                     source: "youtube".to_string(),
                                     phase: DownloadProgressPhase::Downloading,
                                     percent: Some(
-                                        ((downloaded.saturating_mul(100)) / total_size.max(1)) as u8,
+                                        ((downloaded.saturating_mul(100)) / total_size.max(1))
+                                            as u8,
                                     ),
                                     message: "Downloading audio stream".to_string(),
-                                    detail: Some(format!(
-                                        "{} / {} bytes",
-                                        downloaded, total_size
-                                    )),
+                                    detail: Some(format!("{} / {} bytes", downloaded, total_size)),
                                 });
                             }
                             Err(_) => {
@@ -2779,7 +2777,9 @@ impl DownloadSource<DownloadRequest> for YoutubeDownloadSource<'_> {
             request.opts.output_dir = parent.display().to_string();
         }
         let result = if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            tokio::task::block_in_place(|| handle.block_on(self.client.download_with_progress(&request, reporter)))?
+            tokio::task::block_in_place(|| {
+                handle.block_on(self.client.download_with_progress(&request, reporter))
+            })?
         } else {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -2862,9 +2862,15 @@ mod tests {
     #[test]
     fn snapshot_state_maps_terminal_states() {
         assert_eq!(snapshot_state(&DownloadProgressPhase::Queued), "queued");
-        assert_eq!(snapshot_state(&DownloadProgressPhase::Completed), "completed");
+        assert_eq!(
+            snapshot_state(&DownloadProgressPhase::Completed),
+            "completed"
+        );
         assert_eq!(snapshot_state(&DownloadProgressPhase::Failed), "failed");
-        assert_eq!(snapshot_state(&DownloadProgressPhase::Downloading), "running");
+        assert_eq!(
+            snapshot_state(&DownloadProgressPhase::Downloading),
+            "running"
+        );
     }
 
     #[test]
