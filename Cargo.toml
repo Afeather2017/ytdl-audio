@@ -1,9 +1,10 @@
 [package]
 name = "ytdl-audio"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Download YouTube audio, subtitles, and thumbnails"
 license = "MIT"
+exclude = ["downloads/"]
 
 [lib]
 name = "ytdl_audio"
@@ -14,7 +15,7 @@ name = "ytdl-audio"
 path = "src/main.rs"
 
 [dependencies]
-download-core = { path = "../ncmdump-rs/download-core" }
+download-core = { version = "0.1.0", path = "../ncmdump-rs/download-core" }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "cookies"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
