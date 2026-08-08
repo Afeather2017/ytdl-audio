@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 const INNERTUBE_KEY: &str = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
 const VR_USER_AGENT: &str = "com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip";
-const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const VISIONOS_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
 const SAFARI_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.5 Safari/605.1.15,gzip(gfe)";
-const WEB_CLIENT_VERSION: &str = "2.20260114.08.00";
-const TV_CLIENT_VERSION: &str = "5.20260114";
+const WEB_CLIENT_VERSION: &str = "2.20260708.00.00";
+const TV_CLIENT_VERSION: &str = "5.20260707";
 const CHUNK_SIZE: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -408,6 +409,10 @@ struct PlayerResponse {
     streaming_data: Option<StreamingData>,
     video_details: Option<VideoDetails>,
     captions: Option<Captions>,
+    #[serde(default)]
+    ad_placements: Vec<serde_json::Value>,
+    #[serde(default)]
+    ad_slots: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -557,12 +562,15 @@ fn load_cookie_store_from_netscape(path: &str) -> Result<CookieStore, Error> {
 
 fn debug_cookie_header(store: &CookieStore, url: &str, label: &str) {
     if let Ok(url) = reqwest::Url::parse(url) {
-        let cookie_header = store
+        let cookie_names = store
             .get_request_values(&url)
-            .map(|(name, value)| format!("{}={}", name, value))
-            .collect::<Vec<_>>()
-            .join("; ");
-        eprintln!("cookie_header[{label}]: {}", cookie_header);
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        eprintln!(
+            "cookie_header[{label}]: count={} names={}",
+            cookie_names.len(),
+            cookie_names.join(",")
+        );
     }
 }
 
@@ -901,14 +909,6 @@ struct WatchPageContext {
     sts: Option<u32>,
 }
 
-#[derive(Default)]
-struct ClientConfig {
-    client_name: Option<String>,
-    client_version: Option<String>,
-    user_agent: Option<String>,
-    visitor_data: Option<String>,
-}
-
 fn extract_ytcfg(page_html: &str) -> Option<String> {
     let re = Regex::new(r#"ytcfg\.set\(\s*(\{.+?\})\s*\)\s*;"#).ok()?;
     re.captures(page_html).map(|c| c[1].to_string())
@@ -958,43 +958,6 @@ fn parse_ytcfg_context(page_html: &str) -> WatchPageContext {
         .and_then(|x| x.as_u64())
         .and_then(|n| u32::try_from(n).ok());
     ctx
-}
-
-fn parse_client_config(page_html: &str) -> ClientConfig {
-    let Some(ytcfg_json) = extract_ytcfg(page_html) else {
-        return ClientConfig::default();
-    };
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&ytcfg_json) else {
-        return ClientConfig::default();
-    };
-    ClientConfig {
-        client_name: v
-            .pointer("/INNERTUBE_CONTEXT/client/clientName")
-            .and_then(|x| x.as_str())
-            .map(str::to_string),
-        client_version: v
-            .pointer("/INNERTUBE_CONTEXT/client/clientVersion")
-            .and_then(|x| x.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                v.get("INNERTUBE_CONTEXT_CLIENT_VERSION")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string)
-            }),
-        user_agent: v
-            .pointer("/INNERTUBE_CONTEXT/client/userAgent")
-            .and_then(|x| x.as_str())
-            .map(str::to_string),
-        visitor_data: v
-            .pointer("/INNERTUBE_CONTEXT/client/visitorData")
-            .and_then(|x| x.as_str())
-            .map(str::to_string)
-            .or_else(|| {
-                v.get("VISITOR_DATA")
-                    .and_then(|x| x.as_str())
-                    .map(str::to_string)
-            }),
-    }
 }
 
 fn parse_data_sync_id(value: &str) -> (Option<String>, Option<String>) {
@@ -1273,6 +1236,121 @@ async fn fetch_player_response(
     Ok(resp.json().await?)
 }
 
+async fn fetch_player_response_visionos(
+    client: &reqwest::Client,
+    video_id: &str,
+    visitor_data: &str,
+) -> Result<PlayerResponse, Error> {
+    eprintln!("Requesting player API with VISIONOS client...");
+    let mut ctx = serde_json::json!({
+        "clientName": "VISIONOS",
+        "clientVersion": "1.02",
+        "deviceMake": "Apple",
+        "deviceModel": "RealityDevice17,1",
+        "userAgent": VISIONOS_USER_AGENT,
+        "osName": "visionOS",
+        "osVersion": "26.5.23O471",
+        "hl": "en",
+        "gl": "US",
+    });
+    if !visitor_data.is_empty() {
+        ctx["visitorData"] = serde_json::json!(visitor_data);
+    }
+
+    let resp = client
+        .post(format!(
+            "https://www.youtube.com/youtubei/v1/player?key={}&prettyPrint=false",
+            INNERTUBE_KEY
+        ))
+        .header("User-Agent", VISIONOS_USER_AGENT)
+        .header("X-YouTube-Client-Name", "101")
+        .header("X-YouTube-Client-Version", "1.02")
+        .json(&serde_json::json!({
+            "videoId": video_id,
+            "context": { "client": ctx },
+        }))
+        .send()
+        .await?;
+
+    if resp.status() != StatusCode::OK {
+        return Err(Error::Other(format!(
+            "VISIONOS API returned status {}",
+            resp.status()
+        )));
+    }
+    Ok(resp.json().await?)
+}
+
+fn has_usable_audio_format(response: &PlayerResponse) -> bool {
+    response
+        .streaming_data
+        .as_ref()
+        .map(|streaming_data| {
+            streaming_data
+                .adaptive_formats
+                .iter()
+                .chain(streaming_data.formats.iter())
+                .any(|format| {
+                    format.mime_type.contains("audio")
+                        && (format.url.is_some() || format.signature_cipher.is_some())
+                })
+        })
+        .unwrap_or(false)
+}
+
+fn ad_renderer_wait_seconds(renderer: &serde_json::Value) -> Option<u64> {
+    let duration = renderer
+        .get("playerVars")
+        .and_then(|value| value.as_str())
+        .and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes()).find_map(|(key, value)| {
+                (key == "length_seconds")
+                    .then(|| value.parse::<f64>().ok())
+                    .flatten()
+            })
+        });
+    let skip = renderer
+        .get("skipOffsetMilliseconds")
+        .and_then(|value| {
+            value
+                .as_f64()
+                .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        })
+        .map(|milliseconds| milliseconds / 1000.0);
+
+    skip.or(duration).map(|seconds| seconds.ceil() as u64)
+}
+
+fn preplay_wait_seconds(response: &PlayerResponse) -> u64 {
+    let placement_wait = response.ad_placements.iter().filter_map(|placement| {
+        let renderer = placement.get("adPlacementRenderer")?;
+        (renderer
+            .pointer("/config/adPlacementConfig/kind")?
+            .as_str()?
+            == "AD_PLACEMENT_KIND_START")
+            .then(|| {
+                renderer
+                    .pointer("/renderer/instreamVideoAdRenderer")
+                    .and_then(ad_renderer_wait_seconds)
+            })
+            .flatten()
+    });
+
+    let slot_wait = response.ad_slots.iter().filter_map(|slot| {
+        let renderer = slot.get("adSlotRenderer")?;
+        (renderer.pointer("/adSlotMetadata/triggerEvent")?.as_str()?
+            == "SLOT_TRIGGER_EVENT_BEFORE_CONTENT")
+            .then(|| {
+                renderer
+                    .pointer("/fulfillmentContent/fulfilledLayout/playerBytesAdLayoutRenderer/renderingContent/instreamVideoAdRenderer")
+                    .and_then(ad_renderer_wait_seconds)
+            })
+            .flatten()
+    });
+
+    placement_wait.chain(slot_wait).sum()
+}
+
 fn pick_audio_format<'a>(
     formats: &'a [AdaptiveFormat],
     preferred_itag: &str,
@@ -1308,32 +1386,26 @@ fn extract_player_js_url(page_html: &str) -> Option<String> {
         .or_else(|| caps.get(2))?
         .as_str()
         .replace("\\/", "/");
-    if path.starts_with("http") {
+    let url = if path.starts_with("http") {
         Some(path)
     } else if path.starts_with("//") {
         Some(format!("https:{}", path))
     } else {
         Some(format!("https://www.youtube.com{}", path))
-    }
+    }?;
+
+    let player_id = Regex::new(r#"/s/player/([^/]+)/"#)
+        .ok()?
+        .captures(&url)?
+        .get(1)?
+        .as_str();
+    Some(format!(
+        "https://www.youtube.com/s/player/{player_id}/player_ias.vflset/en_US/base.js"
+    ))
 }
 
 async fn fetch_player_js(client: &reqwest::Client, url: &str) -> Result<String, Error> {
     Ok(client.get(url).send().await?.text().await?)
-}
-
-async fn fetch_client_config_page(
-    client: &reqwest::Client,
-    url: &str,
-    user_agent: &str,
-) -> Result<String, Error> {
-    eprintln!("Fetching client config page: {}", url);
-    Ok(client
-        .get(url)
-        .header("User-Agent", user_agent)
-        .send()
-        .await?
-        .text()
-        .await?)
 }
 
 fn build_sig_solver_input(player_js: &str, sig: Option<&str>, n: Option<&str>) -> Option<String> {
@@ -1764,15 +1836,11 @@ async fn fetch_player_response_tv(
     client: &reqwest::Client,
     video_id: &str,
     auth: &AuthContext,
-    cfg: &ClientConfig,
 ) -> Result<PlayerResponse, Error> {
     eprintln!("Requesting player API with tv_downgraded client...");
-    let client_name = cfg.client_name.as_deref().unwrap_or("TVHTML5");
-    let client_version = cfg.client_version.as_deref().unwrap_or(TV_CLIENT_VERSION);
-    let user_agent = cfg
-        .user_agent
-        .as_deref()
-        .unwrap_or("Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version");
+    let client_name = "TVHTML5";
+    let client_version = TV_CLIENT_VERSION;
+    let user_agent = "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version";
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         "User-Agent",
@@ -1854,10 +1922,9 @@ async fn fetch_player_response_tv(
         "timeZone": "UTC",
         "utcOffsetMinutes": 0,
     });
-    if let Some(visitor) = cfg
-        .visitor_data
+    if let Some(visitor) = auth
+        .ytcfg_visitor_data
         .as_deref()
-        .or(auth.ytcfg_visitor_data.as_deref())
         .or(auth.visitor_data.as_deref())
     {
         client_ctx["visitorData"] = serde_json::json!(visitor);
@@ -2050,12 +2117,13 @@ async fn download_file(
 
         let mut retry = 0;
         loop {
-            let resp = client
-                .get(url)
-                .header("Range", format!("bytes={}-{}", range_start, range_end))
-                .timeout(std::time::Duration::from_secs(300))
-                .send()
-                .await;
+            let request = client.get(url).timeout(std::time::Duration::from_secs(300));
+            let request = if range_start == 0 && range_end == total_size - 1 {
+                request
+            } else {
+                request.header("Range", format!("bytes={}-{}", range_start, range_end))
+            };
+            let resp = request.send().await;
 
             let resp = match resp {
                 Ok(r) => r,
@@ -2385,7 +2453,15 @@ async fn run_download(
         .map(|(client, _)| client)
         .unwrap_or(&yc.client);
     let (visitor_data, page_html) = fetch_video_page(initial_client, &video_id).await?;
-    let pr = fetch_player_response(initial_client, &video_id, &visitor_data).await?;
+    let visionos_pr =
+        fetch_player_response_visionos(initial_client, &video_id, &visitor_data).await?;
+    let pr = if visionos_pr.playability_status.status == "OK"
+        && has_usable_audio_format(&visionos_pr)
+    {
+        visionos_pr
+    } else {
+        fetch_player_response(initial_client, &video_id, &visitor_data).await?
+    };
 
     let (pr, client, page_html) = if let Some((cookie_client, mut auth)) = authenticated {
         if pr.playability_status.status != "OK" {
@@ -2401,14 +2477,14 @@ async fn run_download(
         let web_page_html = page_html.clone();
         let page_ctx = parse_ytcfg_context(&web_page_html);
         eprintln!(
-            "page_ctx: visitor={:?} session_index={:?} delegated={:?} user={:?} logged_in={:?} client_version={:?} data_sync_id={:?} sts={:?}",
-            page_ctx.visitor_data,
+            "page_ctx: visitor_present={} session_index={:?} delegated_present={} user_present={} logged_in={:?} client_version={:?} data_sync_id_present={} sts={:?}",
+            page_ctx.visitor_data.is_some(),
             page_ctx.session_index,
-            page_ctx.delegated_session_id,
-            page_ctx.user_session_id,
+            page_ctx.delegated_session_id.is_some(),
+            page_ctx.user_session_id.is_some(),
             page_ctx.logged_in,
             page_ctx.ytcfg_client_version,
-            page_ctx.data_sync_id,
+            page_ctx.data_sync_id.is_some(),
             page_ctx.sts
         );
         if page_ctx.visitor_data.is_some() {
@@ -2456,56 +2532,63 @@ async fn run_download(
             auth.sts = page_ctx.sts;
         }
         eprintln!(
-            "auth_ctx: visitor={:?} session_index={:?} delegated={:?} user={:?} logged_in={} client_version={:?} data_sync_id={:?} sts={:?} sapisid_present={}",
+            "auth_ctx: visitor_present={} session_index={:?} delegated_present={} user_present={} logged_in={} client_version={:?} data_sync_id_present={} sts={:?} sapisid_present={}",
             auth.ytcfg_visitor_data
                 .as_deref()
-                .or(auth.visitor_data.as_deref()),
+                .or(auth.visitor_data.as_deref())
+                .is_some(),
             auth.session_index,
-            auth.delegated_session_id,
-            auth.user_session_id,
+            auth.delegated_session_id.is_some(),
+            auth.user_session_id.is_some(),
             auth.logged_in,
             auth.ytcfg_client_version,
-            auth.data_sync_id,
+            auth.data_sync_id.is_some(),
             auth.sts,
             !auth.sapisid.is_empty()
         );
-        let tv_cfg_html = fetch_client_config_page(
-            &cookie_client,
-            "https://www.youtube.com/tv",
-            "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version",
-        )
-        .await
-        .unwrap_or_default();
-        let tv_cfg = parse_client_config(&tv_cfg_html);
-        let tv_pr = fetch_player_response_tv(&cookie_client, &video_id, &auth, &tv_cfg).await?;
-        if tv_pr.playability_status.status == "OK" {
+        let tv_pr = fetch_player_response_tv(&cookie_client, &video_id, &auth).await?;
+        if tv_pr.playability_status.status == "OK" && has_usable_audio_format(&tv_pr) {
             (tv_pr, cookie_client, web_page_html)
         } else {
-            let tv_reason = tv_pr
-                .playability_status
-                .reason
-                .as_deref()
-                .unwrap_or("unknown");
-            eprintln!("tv_downgraded failed: {} — trying WEB client...", tv_reason);
-            let web_pr = fetch_player_response_web(&cookie_client, &video_id, &auth).await?;
-            if web_pr.playability_status.status == "OK" {
-                (web_pr, cookie_client, web_page_html)
+            let tv_reason = if tv_pr.playability_status.status == "OK" {
+                "no downloadable audio formats"
             } else {
-                let web_reason = web_pr
+                tv_pr
                     .playability_status
                     .reason
                     .as_deref()
-                    .unwrap_or("unknown");
+                    .unwrap_or("unknown")
+            };
+            eprintln!("tv_downgraded failed: {} — trying WEB client...", tv_reason);
+            let web_pr = fetch_player_response_web(&cookie_client, &video_id, &auth).await?;
+            if web_pr.playability_status.status == "OK" && has_usable_audio_format(&web_pr) {
+                (web_pr, cookie_client, web_page_html)
+            } else {
+                let web_reason = if web_pr.playability_status.status == "OK" {
+                    "no downloadable audio formats"
+                } else {
+                    web_pr
+                        .playability_status
+                        .reason
+                        .as_deref()
+                        .unwrap_or("unknown")
+                };
                 eprintln!("WEB failed: {} — trying web_safari client...", web_reason);
                 let safari_pr =
                     fetch_player_response_web_safari(&cookie_client, &video_id, &auth).await?;
-                if safari_pr.playability_status.status == "OK" {
+                if safari_pr.playability_status.status == "OK"
+                    && has_usable_audio_format(&safari_pr)
+                {
                     (safari_pr, cookie_client, web_page_html)
                 } else {
-                    let safari_reason = safari_pr
-                        .playability_status
-                        .reason
-                        .unwrap_or_else(|| "unknown".into());
+                    let safari_reason = if safari_pr.playability_status.status == "OK" {
+                        "no downloadable audio formats".into()
+                    } else {
+                        safari_pr
+                            .playability_status
+                            .reason
+                            .unwrap_or_else(|| "unknown".into())
+                    };
                     return Err(Error::Other(format!(
                         "Video not playable (tv_downgraded: {}; WEB: {}; web_safari: {})",
                         tv_reason, web_reason, safari_reason
@@ -2529,6 +2612,12 @@ async fn run_download(
         .and_then(|v| v.title.as_deref())
         .unwrap_or(&video_id);
     let safe_title = sanitize_filename(title);
+
+    let wait_seconds = preplay_wait_seconds(&pr);
+    if wait_seconds > 0 {
+        eprintln!("Waiting {wait_seconds}s for pre-content playback...");
+        tokio::time::sleep(std::time::Duration::from_secs(wait_seconds)).await;
+    }
 
     let sd = pr
         .streaming_data
@@ -2819,6 +2908,86 @@ impl DownloadSource<DownloadRequest> for YoutubeDownloadSource<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn player_response_with_formats(formats: Vec<AdaptiveFormat>) -> PlayerResponse {
+        PlayerResponse {
+            playability_status: Playability {
+                status: "OK".into(),
+                reason: None,
+            },
+            streaming_data: Some(StreamingData {
+                formats: Vec::new(),
+                adaptive_formats: formats,
+                hls_manifest_url: None,
+            }),
+            video_details: None,
+            captions: None,
+            ad_placements: Vec::new(),
+            ad_slots: Vec::new(),
+        }
+    }
+
+    fn audio_format(itag: u32, url: Option<&str>) -> AdaptiveFormat {
+        AdaptiveFormat {
+            itag,
+            mime_type: "audio/webm; codecs=\"opus\"".into(),
+            bitrate: 128_000,
+            url: url.map(str::to_string),
+            signature_cipher: None,
+            content_length: Some(1024),
+        }
+    }
+
+    #[test]
+    fn usable_audio_format_requires_a_download_url_or_cipher() {
+        let sabr_only = player_response_with_formats(vec![audio_format(251, None)]);
+        assert!(!has_usable_audio_format(&sabr_only));
+
+        let direct = player_response_with_formats(vec![audio_format(
+            251,
+            Some("https://example.com/audio"),
+        )]);
+        assert!(has_usable_audio_format(&direct));
+    }
+
+    #[test]
+    fn pick_audio_format_falls_back_to_highest_usable_bitrate() {
+        let mut unavailable = audio_format(251, None);
+        unavailable.bitrate = 160_000;
+        let mut available = audio_format(140, Some("https://example.com/audio"));
+        available.bitrate = 128_000;
+        let formats = vec![unavailable, available];
+
+        assert_eq!(
+            pick_audio_format(&formats, "251").map(|f| f.itag),
+            Some(140)
+        );
+    }
+
+    #[test]
+    fn player_js_url_uses_upstream_main_variant() {
+        let page = r#"{"jsUrl":"/s/player/854a788e/player_es6.vflset/zh_CN/base.js"}"#;
+        assert_eq!(
+            extract_player_js_url(page).as_deref(),
+            Some("https://www.youtube.com/s/player/854a788e/player_ias.vflset/en_US/base.js")
+        );
+    }
+
+    #[test]
+    fn preplay_wait_uses_skip_offset_before_full_ad_duration() {
+        let mut response = player_response_with_formats(Vec::new());
+        response.ad_placements = vec![serde_json::json!({
+            "adPlacementRenderer": {
+                "config": { "adPlacementConfig": { "kind": "AD_PLACEMENT_KIND_START" } },
+                "renderer": { "instreamVideoAdRenderer": {
+                    "playerVars": "length_seconds=15",
+                    "skipOffsetMilliseconds": 5500
+                }}
+            }
+        })];
+
+        assert_eq!(preplay_wait_seconds(&response), 6);
+    }
 
     #[test]
     fn test_cdp_cookie_json_parsing() {
